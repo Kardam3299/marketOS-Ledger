@@ -12,6 +12,18 @@ contextBridge.exposeInMainWorld('api', {
   // Settings API
   getSettings: () => ipcRenderer.invoke('get-settings'),
   updateSettings: (settings) => ipcRenderer.invoke('update-settings', settings),
+  updateSyncSettings: (syncSettings) => ipcRenderer.invoke('update-sync-settings', syncSettings),
+
+  // Cloud Sync API
+  getSyncStatus: () => ipcRenderer.invoke('get-sync-status'),
+  triggerSync: () => ipcRenderer.invoke('trigger-sync'),
+  testSyncConnection: (credentials) => ipcRenderer.invoke('test-sync-connection', credentials),
+  notifyOnline: () => ipcRenderer.invoke('notify-online'),
+  onSyncStatusChange: (callback) => {
+    const handler = (_event, value) => callback(value);
+    ipcRenderer.on('sync-status-changed', handler);
+    return () => ipcRenderer.removeListener('sync-status-changed', handler);
+  },
 
   // Backup/Restore API
   backupDatabase: () => ipcRenderer.invoke('backup-database'),

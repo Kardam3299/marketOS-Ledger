@@ -9,14 +9,24 @@ const {
   handleUpdateTransaction,
   handleGetSettings,
   handleUpdateSettings,
+  handleUpdateSyncSettings,
+  handleGetSyncStatus,
+  handleTriggerSync,
+  handleTestSyncConnection,
+  handleNotifyOnline,
   handleBackupDatabase,
   handleRestoreDatabase,
   handleResetDatabase,
   handleGetDashboardStats,
   handleGetReportData,
 } = require('./ipcHandlers.cjs');
-
-
+const {
+  setMainWindow,
+  startAutoSync,
+  stopAutoSync,
+  syncNow,
+  broadcastSyncStatus,
+} = require('./syncService.cjs');
 
 let mainWindow;
 
@@ -34,6 +44,8 @@ const createWindow = () => {
     },
     icon: path.join(__dirname, '../assets/icon.ico'),
   });
+
+  setMainWindow(mainWindow);
 
   const isDev = process.env.NODE_ENV === 'development' || 
                 process.env.ELECTRON_DEV === 'true' ||
@@ -69,6 +81,13 @@ const initializeApp = () => {
   // Settings handlers
   ipcMain.handle('get-settings', handleGetSettings);
   ipcMain.handle('update-settings', handleUpdateSettings);
+  ipcMain.handle('update-sync-settings', handleUpdateSyncSettings);
+
+  // Cloud Sync handlers
+  ipcMain.handle('get-sync-status', handleGetSyncStatus);
+  ipcMain.handle('trigger-sync', handleTriggerSync);
+  ipcMain.handle('test-sync-connection', handleTestSyncConnection);
+  ipcMain.handle('notify-online', handleNotifyOnline);
 
   // Backup/Restore handlers
   ipcMain.handle('backup-database', handleBackupDatabase);
@@ -80,9 +99,16 @@ app.on('ready', () => {
   initializeApp();
   createWindow();
   createMenu();
+  startAutoSync();
+  // Trigger initial sync on startup
+  setTimeout(() => {
+    broadcastSyncStatus();
+    syncNow().catch((err) => console.error('Startup sync error:', err));
+  }, 1000);
 });
 
 app.on('window-all-closed', () => {
+  stopAutoSync();
   closeDatabase();
   if (process.platform !== 'darwin') {
     app.quit();

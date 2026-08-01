@@ -1,4 +1,5 @@
-const { getDatabase } = require('./database.cjs');
+const { getDatabase, addToPendingQueue, getSettings, updateSettingsInStore } = require('./database.cjs');
+const { getSyncStatus, testConnection, syncNow, broadcastSyncStatus } = require('./syncService.cjs');
 const dayjs = require('dayjs');
 const fs = require('fs');
 const path = require('path');
@@ -13,6 +14,7 @@ const handleAddTransaction = (event, transaction) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const now = dayjs().toISOString();
     const result = stmt.run(
       transaction.date,
       transaction.type,
@@ -20,9 +22,29 @@ const handleAddTransaction = (event, transaction) => {
       transaction.amount,
       transaction.payment_mode,
       transaction.description || '',
-      dayjs().toISOString(),
-      dayjs().toISOString()
+      now,
+      now
     );
+
+    const insertedTransaction = {
+      id: result.lastInsertRowid,
+      date: transaction.date,
+      type: transaction.type,
+      category: transaction.category,
+      amount: transaction.amount,
+      payment_mode: transaction.payment_mode,
+      description: transaction.description || '',
+      created_at: now,
+      updated_at: now,
+    };
+
+    addToPendingQueue('UPSERT', insertedTransaction);
+    broadcastSyncStatus();
+
+    const settings = getSettings();
+    if (settings.cloud_sync_enabled) {
+      syncNow().catch((err) => console.error('Auto sync error after add:', err));
+    }
 
     return { success: true, id: result.lastInsertRowid };
   } catch (error) {
@@ -74,6 +96,15 @@ const handleDeleteTransaction = (event, id) => {
     const db = getDatabase();
     const stmt = db.prepare('DELETE FROM transactions WHERE id = ?');
     stmt.run(id);
+
+    addToPendingQueue('DELETE', { id });
+    broadcastSyncStatus();
+
+    const settings = getSettings();
+    if (settings.cloud_sync_enabled) {
+      syncNow().catch((err) => console.error('Auto sync error after delete:', err));
+    }
+
     return { success: true };
   } catch (error) {
     console.error('Error deleting transaction:', error);
@@ -90,6 +121,7 @@ const handleUpdateTransaction = (event, id, transaction) => {
       WHERE id = ?
     `);
 
+    const now = dayjs().toISOString();
     stmt.run(
       transaction.date,
       transaction.type,
@@ -97,9 +129,28 @@ const handleUpdateTransaction = (event, id, transaction) => {
       transaction.amount,
       transaction.payment_mode,
       transaction.description || '',
-      dayjs().toISOString(),
+      now,
       id
     );
+
+    const updatedTransaction = {
+      id,
+      date: transaction.date,
+      type: transaction.type,
+      category: transaction.category,
+      amount: transaction.amount,
+      payment_mode: transaction.payment_mode,
+      description: transaction.description || '',
+      updated_at: now,
+    };
+
+    addToPendingQueue('UPSERT', updatedTransaction);
+    broadcastSyncStatus();
+
+    const settings = getSettings();
+    if (settings.cloud_sync_enabled) {
+      syncNow().catch((err) => console.error('Auto sync error after update:', err));
+    }
 
     return { success: true };
   } catch (error) {
@@ -230,8 +281,7 @@ const handleGetReportData = (event, filters = {}) => {
 // Settings Handlers
 const handleGetSettings = (event) => {
   try {
-    const db = getDatabase();
-    const settings = db.prepare('SELECT * FROM settings LIMIT 1').get();
+    const settings = getSettings();
     return { success: true, data: settings };
   } catch (error) {
     console.error('Error getting settings:', error);
@@ -239,27 +289,61 @@ const handleGetSettings = (event) => {
   }
 };
 
-const handleUpdateSettings = (event, settings) => {
+const handleUpdateSettings = (event, newSettings) => {
   try {
-    const db = getDatabase();
-    const stmt = db.prepare(`
-      UPDATE settings 
-      SET business_name = ?, owner_name = ?, currency = ?, updated_at = ?
-      WHERE id = 1
-    `);
+    const updated = updateSettingsInStore(newSettings);
+    broadcastSyncStatus();
 
-    stmt.run(
-      settings.business_name,
-      settings.owner_name,
-      settings.currency,
-      dayjs().toISOString()
-    );
+    if (updated.cloud_sync_enabled) {
+      syncNow().catch((err) => console.error('Auto sync error after settings update:', err));
+    }
 
-    return { success: true };
+    return { success: true, data: updated };
   } catch (error) {
     console.error('Error updating settings:', error);
     return { success: false, error: error.message };
   }
+};
+
+const handleUpdateSyncSettings = (event, syncSettings) => {
+  try {
+    const updated = updateSettingsInStore({
+      cloud_sync_enabled: syncSettings.cloud_sync_enabled,
+      supabase_url: syncSettings.supabase_url,
+      supabase_anon_key: syncSettings.supabase_anon_key,
+    });
+    broadcastSyncStatus();
+
+    if (updated.cloud_sync_enabled) {
+      syncNow().catch((err) => console.error('Auto sync error after sync settings update:', err));
+    }
+
+    return { success: true, data: updated };
+  } catch (error) {
+    console.error('Error updating sync settings:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Cloud Sync Handlers
+const handleGetSyncStatus = () => {
+  return getSyncStatus();
+};
+
+const handleTriggerSync = async () => {
+  return await syncNow();
+};
+
+const handleTestSyncConnection = async (event, credentials) => {
+  return await testConnection(credentials);
+};
+
+const handleNotifyOnline = async () => {
+  const settings = getSettings();
+  if (settings.cloud_sync_enabled) {
+    return await syncNow();
+  }
+  return { success: true, message: 'App online' };
 };
 
 // Backup and Restore Handlers
@@ -323,6 +407,11 @@ module.exports = {
   handleUpdateTransaction,
   handleGetSettings,
   handleUpdateSettings,
+  handleUpdateSyncSettings,
+  handleGetSyncStatus,
+  handleTriggerSync,
+  handleTestSyncConnection,
+  handleNotifyOnline,
   handleBackupDatabase,
   handleRestoreDatabase,
   handleResetDatabase,

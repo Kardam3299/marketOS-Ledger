@@ -1,16 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY;
-
-export const supabase =
-  supabaseUrl && supabaseAnonKey
-    ? createClient(supabaseUrl, supabaseAnonKey, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      })
-    : null;
-
-export const isSupabaseConfigured = Boolean(supabase);
+// Supabase client is handled exclusively in the Electron Main process (IPC only) for security.
+// React components should not access Supabase directly.
+export const supabase = null;
+export const isSupabaseConfigured = false;

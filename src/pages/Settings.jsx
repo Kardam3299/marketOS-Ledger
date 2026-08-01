@@ -4,19 +4,32 @@ import Input from '../components/Input';
 import Select from '../components/Select';
 import Button from '../components/Button';
 import { useSettings } from '../hooks/useData';
+import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/ToastContext';
 import { CURRENCIES } from '../utils/constants';
 import { validateBusinessName, validateOwnerName } from '../utils/validators';
 
 export default function Settings() {
   const { settings, loading, updateSettings } = useSettings();
+  const { syncStatus, triggerSync, testConnection, updateSyncSettings, loading: syncLoading } = useSync();
   const { success, error } = useToast();
+
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSavingSync, setIsSavingSync] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
   const [errors, setErrors] = useState({});
   const [formData, setFormData] = useState({
     business_name: '',
     owner_name: '',
     currency: 'USD',
+  });
+
+  const [syncFormData, setSyncFormData] = useState({
+    cloud_sync_enabled: false,
+    supabase_url: '',
+    supabase_anon_key: '',
   });
 
   useEffect(() => {
@@ -25,6 +38,11 @@ export default function Settings() {
         business_name: settings.business_name || '',
         owner_name: settings.owner_name || '',
         currency: settings.currency || 'USD',
+      });
+      setSyncFormData({
+        cloud_sync_enabled: Boolean(settings.cloud_sync_enabled),
+        supabase_url: settings.supabase_url || '',
+        supabase_anon_key: settings.supabase_anon_key || '',
       });
     }
   }, [settings]);
@@ -66,6 +84,40 @@ export default function Settings() {
 
     if (result) {
       success('Settings saved successfully');
+    }
+  };
+
+  const handleSaveSyncSettings = async (e) => {
+    e.preventDefault();
+    setIsSavingSync(true);
+    setTestResult(null);
+
+    const res = await updateSyncSettings(syncFormData);
+    setIsSavingSync(false);
+
+    if (res && res.success) {
+      success('Cloud Sync settings saved');
+    } else {
+      error(res?.error || 'Failed to save Cloud Sync settings');
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+
+    const res = await testConnection({
+      url: syncFormData.supabase_url,
+      key: syncFormData.supabase_anon_key,
+    });
+
+    setIsTesting(false);
+    setTestResult(res);
+
+    if (res.success) {
+      success(res.message || 'Connection successful!');
+    } else {
+      error(res.error || 'Connection test failed');
     }
   };
 
@@ -133,7 +185,7 @@ export default function Settings() {
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600 mt-2">Manage your business information and preferences</p>
+        <p className="text-gray-600 mt-2">Manage your business information and cloud synchronization</p>
       </div>
 
       {/* Business Settings */}
@@ -171,8 +223,115 @@ export default function Settings() {
             isLoading={isUpdating}
             disabled={loading}
           >
-            Save Settings
+            Save Business Settings
           </Button>
+        </form>
+      </Card>
+
+      {/* Cloud Sync Settings */}
+      <Card>
+        <h3 className="text-xl font-bold text-gray-900 mb-2">Cloud Sync Settings</h3>
+        <p className="text-gray-600 mb-6">
+          Synchronize your offline ledger data with Supabase Cloud automatically when online.
+        </p>
+
+        <form onSubmit={handleSaveSyncSettings} className="space-y-6">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="cloud_sync_enabled"
+              name="cloud_sync_enabled"
+              checked={syncFormData.cloud_sync_enabled}
+              onChange={(e) =>
+                setSyncFormData((prev) => ({
+                  ...prev,
+                  cloud_sync_enabled: e.target.checked,
+                }))
+              }
+              className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500 cursor-pointer"
+            />
+            <label
+              htmlFor="cloud_sync_enabled"
+              className="font-medium text-gray-900 cursor-pointer select-none"
+            >
+              Enable Cloud Sync
+            </label>
+          </div>
+
+          <Input
+            label="Supabase URL"
+            name="supabase_url"
+            value={syncFormData.supabase_url}
+            onChange={(e) =>
+              setSyncFormData((prev) => ({ ...prev, supabase_url: e.target.value }))
+            }
+            placeholder="https://xyzcompany.supabase.co"
+          />
+
+          <Input
+            label="Supabase Anon Key"
+            name="supabase_anon_key"
+            type="password"
+            value={syncFormData.supabase_anon_key}
+            onChange={(e) =>
+              setSyncFormData((prev) => ({ ...prev, supabase_anon_key: e.target.value }))
+            }
+            placeholder="eyJhbGciOi..."
+          />
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200 text-sm">
+            <div>
+              <span className="text-gray-500 font-medium">Last Sync Time:</span>{' '}
+              <span className="font-semibold text-gray-800">
+                {syncStatus.lastSyncTime
+                  ? new Date(syncStatus.lastSyncTime).toLocaleString()
+                  : 'Never'}
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-500 font-medium">Pending Queue Count:</span>{' '}
+              <span className="font-semibold text-gray-800">
+                {syncStatus.pendingCount || 0} item(s)
+              </span>
+            </div>
+          </div>
+
+          {testResult && (
+            <div
+              className={`p-4 rounded text-sm ${
+                testResult.success
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                  : 'bg-red-50 text-red-800 border border-red-200'
+              }`}
+            >
+              {testResult.message || testResult.error}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-4 pt-2">
+            <Button type="submit" isLoading={isSavingSync}>
+              Save Sync Settings
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleTestConnection}
+              isLoading={isTesting}
+            >
+              Test Connection
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={triggerSync}
+              isLoading={syncLoading}
+              disabled={!syncFormData.cloud_sync_enabled}
+            >
+              Sync Now
+            </Button>
+          </div>
         </form>
       </Card>
 
@@ -225,7 +384,7 @@ export default function Settings() {
           </p>
           <p>A professional offline desktop ledger for small businesses</p>
           <p className="text-sm mt-4">
-            Built with React, Electron, and SQLite for maximum offline capability
+            Built with React, Electron, and electron-store with Supabase Cloud Sync
           </p>
         </div>
       </Card>

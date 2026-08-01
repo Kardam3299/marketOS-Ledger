@@ -134,7 +134,7 @@ export default function Reports() {
                   {reportData.transactionCount > 0
                     ? formatCurrency(
                         reportData.totalIncome /
-                          reportData.reportData?.filter((t) => t.type === 'income')
+                          reportData.transactions?.filter((t) => t.type === 'income')
                             .length || 1
                       )
                     : formatCurrency(0)}

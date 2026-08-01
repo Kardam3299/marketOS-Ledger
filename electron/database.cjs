@@ -1,6 +1,7 @@
 const Store = require('electron-store');
 const path = require('path');
 const { app } = require('electron');
+const { randomUUID } = require('crypto');
 
 let store = null;
 
@@ -9,6 +10,10 @@ const defaultSettings = {
   business_name: 'My Business',
   owner_name: 'Owner',
   currency: 'USD',
+  cloud_sync_enabled: false,
+  supabase_url: '',
+  supabase_anon_key: '',
+  last_sync_time: null,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
@@ -29,15 +34,34 @@ const initializeDatabase = () => {
     defaults: {
       transactions: [],
       settings: defaultSettings,
+      pendingQueue: [],
     },
   });
 
   if (!store.has('transactions')) {
     store.set('transactions', []);
+  } else {
+    // Migration: convert numeric IDs to UUID string format if any exist
+    const txs = store.get('transactions', []);
+    let modified = false;
+    const migratedTxs = txs.map((tx) => {
+      if (typeof tx.id === 'number' || !tx.id || typeof tx.id !== 'string') {
+        modified = true;
+        return { ...tx, id: randomUUID() };
+      }
+      return tx;
+    });
+    if (modified) {
+      store.set('transactions', migratedTxs);
+    }
   }
 
   if (!store.has('settings')) {
     store.set('settings', defaultSettings);
+  }
+
+  if (!store.has('pendingQueue')) {
+    store.set('pendingQueue', []);
   }
 
   console.log('Database initialized successfully at:', store.path);
@@ -47,13 +71,62 @@ const initializeDatabase = () => {
 const getTransactions = () => store.get('transactions', []);
 const setTransactions = (transactions) => store.set('transactions', transactions);
 
-const getNextTransactionId = () => {
-  const transactions = getTransactions();
-  if (!transactions.length) return 1;
-  return Math.max(...transactions.map((item) => item.id || 0)) + 1;
-};
+const generateUuid = () => randomUUID();
 
 const getSettings = () => store.get('settings', defaultSettings);
+
+const updateSettingsInStore = (newSettings) => {
+  const current = getSettings();
+  const updated = {
+    ...current,
+    ...newSettings,
+    updated_at: new Date().toISOString(),
+  };
+  store.set('settings', updated);
+  return updated;
+};
+
+const getPendingQueue = () => store.get('pendingQueue', []);
+const setPendingQueue = (queue) => store.set('pendingQueue', queue);
+
+const addToPendingQueue = (action, item) => {
+  const queue = getPendingQueue();
+
+  if (action === 'UPSERT' && item && item.id) {
+    const existingIdx = queue.findIndex(
+      (q) => q.action === 'UPSERT' && q.data && q.data.id === item.id
+    );
+    if (existingIdx !== -1) {
+      queue[existingIdx] = {
+        action: 'UPSERT',
+        data: item,
+        timestamp: new Date().toISOString(),
+      };
+      setPendingQueue(queue);
+      return;
+    }
+  }
+
+  if (action === 'DELETE' && item && item.id) {
+    const filteredQueue = queue.filter(
+      (q) => !(q.action === 'UPSERT' && q.data && q.data.id === item.id)
+    );
+    filteredQueue.push({
+      action: 'DELETE',
+      id: item.id,
+      timestamp: new Date().toISOString(),
+    });
+    setPendingQueue(filteredQueue);
+    return;
+  }
+
+  queue.push({
+    action,
+    data: item,
+    timestamp: new Date().toISOString(),
+  });
+  setPendingQueue(queue);
+};
 
 const createStatement = (query) => {
   const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -126,8 +199,9 @@ const createStatement = (query) => {
     run: (...params) => {
       if (normalized.startsWith('insert into transactions')) {
         const [date, type, category, amount, payment_mode, description, created_at, updated_at] = params;
+        const newId = randomUUID();
         const transaction = {
-          id: getNextTransactionId(),
+          id: newId,
           date,
           type,
           category,
@@ -235,4 +309,16 @@ const closeDatabase = () => {
   store = null;
 };
 
-module.exports = { initializeDatabase, getDatabase, closeDatabase, getDbPath };
+module.exports = {
+  initializeDatabase,
+  getDatabase,
+  closeDatabase,
+  getDbPath,
+  getTransactions,
+  setTransactions,
+  getSettings,
+  updateSettingsInStore,
+  getPendingQueue,
+  setPendingQueue,
+  addToPendingQueue,
+};
