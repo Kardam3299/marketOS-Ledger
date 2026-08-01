@@ -20,9 +20,9 @@ const navItems = [
   { path: '/settings', label: 'Settings', icon: IoSettings },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ onClose }) {
   return (
-    <div className="w-64 bg-gray-900 text-white h-screen overflow-y-auto flex flex-col justify-between">
+    <div className="w-64 bg-gray-900 text-white h-full md:h-screen overflow-y-auto flex flex-col justify-between shadow-xl md:shadow-none">
       <div>
         {/* Logo/Header */}
         <div className="p-6 border-b border-gray-800 flex items-center justify-between">
@@ -30,6 +30,15 @@ export default function Sidebar() {
             <h1 className="text-2xl font-bold">MarketOS</h1>
             <p className="text-gray-400 text-sm">Ledger</p>
           </div>
+          {onClose && (
+            <button 
+              onClick={onClose} 
+              className="md:hidden p-2 hover:bg-gray-800 rounded focus:outline-none"
+            >
+              <IoSettings size={0} className="hidden" /> {/* Placeholder just in case */}
+              <span className="text-gray-400 text-lg">✕</span>
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
@@ -50,6 +59,7 @@ export default function Sidebar() {
                   }
                 `
                 }
+                onClick={onClose}
               >
                 <Icon size={20} />
                 <span className="font-medium">{item.label}</span>

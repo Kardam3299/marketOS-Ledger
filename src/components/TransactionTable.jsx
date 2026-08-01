@@ -38,9 +38,9 @@ export default function TransactionTable({
             <th className="text-left py-3 px-4 font-semibold text-gray-700">Date</th>
             <th className="text-left py-3 px-4 font-semibold text-gray-700">Type</th>
             <th className="text-left py-3 px-4 font-semibold text-gray-700">Category</th>
-            <th className="text-right py-3 px-4 font-semibold text-gray-700">Amount</th>
-            <th className="text-left py-3 px-4 font-semibold text-gray-700">Mode</th>
-            <th className="text-left py-3 px-4 font-semibold text-gray-700">Description</th>
+            <th className="text-left py-3 px-4 font-semibold text-gray-700">Amount</th>
+            <th className="text-left py-3 px-4 font-semibold text-gray-700 hidden md:table-cell">Mode</th>
+            <th className="text-left py-3 px-4 font-semibold text-gray-700 hidden lg:table-cell">Description</th>
             <th className="text-center py-3 px-4 font-semibold text-gray-700">Actions</th>
           </tr>
         </thead>
@@ -70,8 +70,8 @@ export default function TransactionTable({
                   {formatCurrency(transaction.amount)}
                 </span>
               </td>
-              <td className="py-3 px-4 text-sm">{transaction.payment_mode}</td>
-              <td className="py-3 px-4 text-sm text-gray-600 max-w-xs truncate">
+              <td className="py-3 px-4 text-sm hidden md:table-cell">{transaction.payment_mode}</td>
+              <td className="py-3 px-4 text-sm text-gray-600 max-w-xs truncate hidden lg:table-cell">
                 {transaction.description || '-'}
               </td>
               <td className="py-3 px-4">

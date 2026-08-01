@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from '../context/ToastContext';
+import { api } from '../lib/repositories';
 
 export function useSync() {
   const [syncStatus, setSyncStatus] = useState({
@@ -14,8 +15,8 @@ export function useSync() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      if (window.api && window.api.getSyncStatus) {
-        const res = await window.api.getSyncStatus();
+      if (api.getSyncStatus) {
+        const res = await api.getSyncStatus();
         if (res) setSyncStatus(res);
       }
     } catch (err) {
@@ -26,8 +27,8 @@ export function useSync() {
   useEffect(() => {
     fetchStatus();
 
-    if (window.api && window.api.onSyncStatusChange) {
-      const unsubscribe = window.api.onSyncStatusChange((updatedStatus) => {
+    if (api.onSyncStatusChange) {
+      const unsubscribe = api.onSyncStatusChange((updatedStatus) => {
         if (updatedStatus) {
           setSyncStatus(updatedStatus);
         }
@@ -40,8 +41,8 @@ export function useSync() {
 
   useEffect(() => {
     const handleOnline = () => {
-      if (window.api && window.api.notifyOnline) {
-        window.api.notifyOnline();
+      if (api.notifyOnline) {
+        api.notifyOnline();
       }
     };
     window.addEventListener('online', handleOnline);
@@ -51,10 +52,10 @@ export function useSync() {
   const triggerSync = async () => {
     setLoading(true);
     try {
-      if (!window.api || !window.api.triggerSync) {
+      if (!api.triggerSync) {
         throw new Error('Sync API is not available');
       }
-      const res = await window.api.triggerSync();
+      const res = await api.triggerSync();
       if (res.success) {
         success('Cloud sync completed successfully');
       } else {
@@ -73,10 +74,10 @@ export function useSync() {
 
   const testConnection = async (credentials) => {
     try {
-      if (!window.api || !window.api.testSyncConnection) {
+      if (!api.testSyncConnection) {
         return { success: false, error: 'IPC API not available' };
       }
-      return await window.api.testSyncConnection(credentials);
+      return await api.testSyncConnection(credentials);
     } catch (err) {
       return { success: false, error: err.message || 'Connection test failed' };
     }
@@ -84,10 +85,10 @@ export function useSync() {
 
   const updateSyncSettings = async (syncSettings) => {
     try {
-      if (!window.api || !window.api.updateSyncSettings) {
+      if (!api.updateSyncSettings) {
         return { success: false, error: 'IPC API not available' };
       }
-      const res = await window.api.updateSyncSettings(syncSettings);
+      const res = await api.updateSyncSettings(syncSettings);
       await fetchStatus();
       return res;
     } catch (err) {

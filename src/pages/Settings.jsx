@@ -8,6 +8,7 @@ import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/ToastContext';
 import { CURRENCIES } from '../utils/constants';
 import { validateBusinessName, validateOwnerName } from '../utils/validators';
+import { api } from '../lib/repositories';
 
 export default function Settings() {
   const { settings, loading, updateSettings } = useSettings();
@@ -123,7 +124,7 @@ export default function Settings() {
 
   const handleBackupDatabase = async () => {
     try {
-      const result = await window.api.backupDatabase();
+      const result = await api.backupDatabase();
       if (result.success) {
         success(`Database backed up to: ${result.path}`);
       } else {
@@ -145,7 +146,7 @@ export default function Settings() {
     }
 
     try {
-      const result = await window.api.restoreDatabase();
+      const result = await api.restoreDatabase();
       if (result.success) {
         success('Database restored successfully');
         window.location.reload();
@@ -168,7 +169,7 @@ export default function Settings() {
     }
 
     try {
-      const result = await window.api.resetDatabase();
+      const result = await api.resetDatabase();
       if (result.success) {
         success('Database reset successfully');
         window.location.reload();
@@ -191,7 +192,7 @@ export default function Settings() {
       {/* Business Settings */}
       <Card>
         <h3 className="text-xl font-bold text-gray-900 mb-6">Business Information</h3>
-        <form onSubmit={handleSaveSettings} className="space-y-6">
+        <form onSubmit={handleSaveSettings} className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Input
             label="Business Name"
             name="business_name"
@@ -218,13 +219,16 @@ export default function Settings() {
             options={CURRENCIES}
           />
 
-          <Button
-            type="submit"
-            isLoading={isUpdating}
-            disabled={loading}
-          >
-            Save Business Settings
-          </Button>
+          <div className="md:col-span-2 pt-4">
+            <Button
+              type="submit"
+              isLoading={isUpdating}
+              disabled={loading}
+              className="w-full sm:w-auto"
+            >
+              Save Business Settings
+            </Button>
+          </div>
         </form>
       </Card>
 
@@ -235,8 +239,8 @@ export default function Settings() {
           Synchronize your offline ledger data with Supabase Cloud automatically when online.
         </p>
 
-        <form onSubmit={handleSaveSyncSettings} className="space-y-6">
-          <div className="flex items-center gap-3">
+        <form onSubmit={handleSaveSyncSettings} className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="md:col-span-2 flex items-center gap-3">
             <input
               type="checkbox"
               id="cloud_sync_enabled"
@@ -298,7 +302,7 @@ export default function Settings() {
 
           {testResult && (
             <div
-              className={`p-4 rounded text-sm ${
+              className={`md:col-span-2 p-4 rounded text-sm ${
                 testResult.success
                   ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                   : 'bg-red-50 text-red-800 border border-red-200'
@@ -308,8 +312,8 @@ export default function Settings() {
             </div>
           )}
 
-          <div className="flex flex-wrap gap-4 pt-2">
-            <Button type="submit" isLoading={isSavingSync}>
+          <div className="md:col-span-2 flex flex-col sm:flex-row flex-wrap gap-4 pt-2">
+            <Button type="submit" isLoading={isSavingSync} className="w-full sm:w-auto">
               Save Sync Settings
             </Button>
 
@@ -318,6 +322,7 @@ export default function Settings() {
               variant="outline"
               onClick={handleTestConnection}
               isLoading={isTesting}
+              className="w-full sm:w-auto"
             >
               Test Connection
             </Button>
@@ -328,6 +333,7 @@ export default function Settings() {
               onClick={triggerSync}
               isLoading={syncLoading}
               disabled={!syncFormData.cloud_sync_enabled}
+              className="w-full sm:w-auto"
             >
               Sync Now
             </Button>
@@ -348,7 +354,7 @@ export default function Settings() {
             <p className="text-blue-800 text-sm mb-4">
               Create a backup copy of your entire database. This file can be used to restore your data if needed.
             </p>
-            <Button variant="outline" onClick={handleBackupDatabase}>
+            <Button variant="outline" onClick={handleBackupDatabase} className="w-full sm:w-auto mt-2">
               Create Backup
             </Button>
           </div>
@@ -358,7 +364,7 @@ export default function Settings() {
             <p className="text-amber-800 text-sm mb-4">
               Restore your database from a previously created backup file.
             </p>
-            <Button variant="outline" onClick={handleRestoreDatabase}>
+            <Button variant="outline" onClick={handleRestoreDatabase} className="w-full sm:w-auto mt-2">
               Restore From Backup
             </Button>
           </div>
@@ -368,7 +374,7 @@ export default function Settings() {
             <p className="text-red-800 text-sm mb-4">
               ⚠️ Delete all transactions and start fresh. This action cannot be undone!
             </p>
-            <Button variant="danger" onClick={handleResetDatabase}>
+            <Button variant="danger" onClick={handleResetDatabase} className="w-full sm:w-auto mt-2">
               Reset All Data
             </Button>
           </div>

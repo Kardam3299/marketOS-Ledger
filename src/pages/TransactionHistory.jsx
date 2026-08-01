@@ -7,6 +7,7 @@ import Select from '../components/Select';
 import Button from '../components/Button';
 import { useToast } from '../context/ToastContext';
 import { INCOME_CATEGORIES, EXPENSE_CATEGORIES, PAYMENT_MODES } from '../utils/constants';
+import { api } from '../lib/repositories';
 
 export default function TransactionHistory() {
   const { transactions, loading, fetchTransactions } = useTransactions();
@@ -61,7 +62,7 @@ export default function TransactionHistory() {
 
   const handleDelete = async (id) => {
     try {
-      const result = await window.api.deleteTransaction(id);
+      const result = await api.deleteTransaction(id);
       if (result.success) {
         success('Transaction deleted successfully');
         fetchTransactions();

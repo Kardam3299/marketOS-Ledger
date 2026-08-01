@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '../context/ToastContext';
 import { setActiveCurrency } from '../utils/formatters';
+import { api } from '../lib/repositories';
 
 export const useTransactions = (filters = {}) => {
   const [transactions, setTransactions] = useState([]);
@@ -10,7 +11,7 @@ export const useTransactions = (filters = {}) => {
   const fetchTransactions = async (filterParams = filters) => {
     setLoading(true);
     try {
-      const result = await window.api.getTransactions(filterParams);
+      const result = await api.getTransactions(filterParams);
       if (result.success) {
         setTransactions(result.data);
       } else {
@@ -47,7 +48,7 @@ export const useDashboardStats = () => {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const result = await window.api.getDashboardStats();
+      const result = await api.getDashboardStats();
       if (result.success) {
         setStats(result.data);
       } else {
@@ -80,7 +81,7 @@ export const useSettings = () => {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const result = await window.api.getSettings();
+      const result = await api.getSettings();
       if (result.success) {
         const nextSettings = result.data || {};
         setSettings(nextSettings);
@@ -99,7 +100,7 @@ export const useSettings = () => {
   const updateSettings = async (newSettings) => {
     setLoading(true);
     try {
-      const result = await window.api.updateSettings(newSettings);
+      const result = await api.updateSettings(newSettings);
       if (result.success) {
         const nextSettings = { ...newSettings, currency: newSettings.currency || 'USD' };
         setSettings(nextSettings);
@@ -133,7 +134,7 @@ export const useReportData = (startDate, endDate) => {
   const fetchReportData = async () => {
     setLoading(true);
     try {
-      const result = await window.api.getReportData({ startDate, endDate });
+      const result = await api.getReportData({ startDate, endDate });
       if (result.success) {
         setReportData(result.data);
       } else {

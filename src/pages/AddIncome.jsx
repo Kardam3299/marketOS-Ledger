@@ -9,6 +9,7 @@ import { useToast } from '../context/ToastContext';
 import { validateTransactionForm } from '../utils/validators';
 import { INCOME_CATEGORIES, PAYMENT_MODES } from '../utils/constants';
 import dayjs from 'dayjs';
+import { api } from '../lib/repositories';
 
 export default function AddIncome() {
   const navigate = useNavigate();
@@ -51,7 +52,7 @@ export default function AddIncome() {
 
     setIsLoading(true);
     try {
-      const result = await window.api.addTransaction({
+      const result = await api.addTransaction({
         ...formData,
         type: 'income',
         amount: parseFloat(formData.amount),
@@ -87,7 +88,7 @@ export default function AddIncome() {
       </div>
 
       <Card>
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Input
             label="Date"
             name="date"
@@ -130,20 +131,23 @@ export default function AddIncome() {
             required
           />
 
-          <TextArea
-            label="Description"
-            name="description"
-            placeholder="Add any notes or details..."
-            value={formData.description}
-            onChange={handleChange}
-            rows={4}
-          />
+          <div className="md:col-span-2">
+            <TextArea
+              label="Description"
+              name="description"
+              placeholder="Add any notes or details..."
+              value={formData.description}
+              onChange={handleChange}
+              rows={4}
+            />
+          </div>
 
-          <div className="flex gap-4 pt-4">
+          <div className="md:col-span-2 flex flex-col sm:flex-row gap-4 pt-4">
             <Button
               type="submit"
               isLoading={isLoading}
               size="lg"
+              className="w-full sm:w-auto"
             >
               Save Income
             </Button>
@@ -152,6 +156,7 @@ export default function AddIncome() {
               variant="secondary"
               size="lg"
               onClick={() => navigate('/')}
+              className="w-full sm:w-auto"
             >
               Cancel
             </Button>

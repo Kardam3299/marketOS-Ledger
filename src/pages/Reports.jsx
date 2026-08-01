@@ -121,7 +121,7 @@ export default function Reports() {
           {/* Transaction Count */}
           <Card>
             <h3 className="text-lg font-bold text-gray-900 mb-4">Summary</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
               <div>
                 <p className="text-gray-600 text-sm">Total Transactions</p>
                 <p className="text-2xl font-bold text-gray-900">
