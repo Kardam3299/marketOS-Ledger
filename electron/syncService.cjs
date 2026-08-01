@@ -193,17 +193,46 @@ async function syncNow() {
     const pendingDeleteIds = new Set(
       remainingQueue.filter((q) => q.action === 'DELETE').map((q) => q.id)
     );
+    const pendingUpsertIds = new Set(
+      remainingQueue.filter((q) => q.action === 'UPSERT').map((q) => q.data.id)
+    );
 
     let updatedLocalTxs = [...localTxs];
     let localChanged = false;
 
     if (remoteTxs && Array.isArray(remoteTxs)) {
+      const remoteIds = new Set(remoteTxs.map(t => t.id));
+
+      if (!settings.last_sync_time) {
+        // Initial sync: Push all local transactions to Supabase
+        for (const localItem of localTxs) {
+          if (!remoteIds.has(localItem.id) && !pendingDeleteIds.has(localItem.id)) {
+            const { error: pushErr } = await client.from('transactions').upsert(localItem);
+            if (!pushErr) {
+              remoteIds.add(localItem.id);
+            } else {
+              console.error('Initial sync push error:', pushErr);
+            }
+          }
+        }
+      } else {
+        // Subsequent syncs: Handle remote deletions
+        for (const localItem of localTxs) {
+          if (!remoteIds.has(localItem.id) && !pendingUpsertIds.has(localItem.id)) {
+            // Local item missing from remote, and not pending to be uploaded -> deleted on remote
+            updatedLocalTxs = updatedLocalTxs.filter((t) => t.id !== localItem.id);
+            localChanged = true;
+          }
+        }
+      }
+
       for (const remoteItem of remoteTxs) {
         if (pendingDeleteIds.has(remoteItem.id)) continue;
 
         const localItem = localTxMap.get(remoteItem.id);
         if (!localItem) {
           // New record from cloud -> insert to local electron-store
+          // But only if it's not a fresh install pushing everything... wait, if it's fresh install, we want to download remote items too
           updatedLocalTxs.push(remoteItem);
           localChanged = true;
         } else {
@@ -224,9 +253,7 @@ async function syncNow() {
             }
           } else if (localTime > remoteTime) {
             // Local record is newer -> push local record to cloud if not already in queue
-            const inQueue = remainingQueue.some(
-              (q) => q.action === 'UPSERT' && q.data.id === localItem.id
-            );
+            const inQueue = pendingUpsertIds.has(localItem.id);
             if (!inQueue) {
               await client.from('transactions').upsert(localItem);
             }
@@ -265,13 +292,13 @@ async function syncNow() {
 
 function startAutoSync() {
   if (autoSyncInterval) clearInterval(autoSyncInterval);
-  // Auto sync every 5 minutes
+  // Auto sync every 30 seconds
   autoSyncInterval = setInterval(() => {
     const settings = getSettings();
     if (settings.cloud_sync_enabled) {
       syncNow();
     }
-  }, 5 * 60 * 1000);
+  }, 30 * 1000);
 }
 
 function stopAutoSync() {

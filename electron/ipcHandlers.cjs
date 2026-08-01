@@ -392,6 +392,18 @@ const handleRestoreDatabase = (event) => {
 const handleResetDatabase = (event) => {
   try {
     const db = getDatabase();
+    
+    // Add all current transactions to the pending queue as DELETE so they are removed from Supabase too
+    const { getTransactions, addToPendingQueue, updateSettingsInStore } = require('./database.cjs');
+    const transactions = getTransactions();
+    transactions.forEach((tx) => addToPendingQueue('DELETE', { id: tx.id }));
+    
+    // Force a sync to push the deletes, reset local last_sync_time
+    updateSettingsInStore({ last_sync_time: null });
+    const { broadcastSyncStatus, syncNow } = require('./syncService.cjs');
+    broadcastSyncStatus();
+    syncNow().catch((err) => console.error('Auto sync error after reset:', err));
+
     db.prepare('DELETE FROM transactions').run();
     return { success: true, message: 'Database reset successfully' };
   } catch (error) {
