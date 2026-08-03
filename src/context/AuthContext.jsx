@@ -21,14 +21,28 @@ export default function AuthProvider({ children }) {
         .eq('id', userId)
         .single();
 
-      if (profileData) {
-        const { data: membershipData } = await supabase
-          .from('business_members')
-          .select('*, businesses(*)')
-          .eq('profile_id', userId)
-          .eq('status', 'active')
-          .maybeSingle();
+      const { data: membershipData } = await supabase
+        .from('business_members')
+        .select('*, businesses(*)')
+        .eq('profile_id', userId)
+        .eq('status', 'active')
+        .maybeSingle();
 
+      const { data: systemInit } = await supabase.rpc('check_system_initialized');
+
+      // If system initialized and user has no active business membership -> Revoked User
+      if (systemInit && (!membershipData || !membershipData.business_id)) {
+        await supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        if (window.api && window.api.clearAuthSession) {
+          window.api.clearAuthSession();
+        }
+        return null;
+      }
+
+      if (profileData) {
         const fullProfile = {
           ...profileData,
           role: membershipData?.role,
@@ -68,12 +82,20 @@ export default function AuthProvider({ children }) {
 
     try {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
 
       if (currentSession?.user) {
-        await fetchProfile(currentSession.user.id);
+        const fetchedProf = await fetchProfile(currentSession.user.id);
+        if (fetchedProf && fetchedProf.business_id) {
+          setSession(currentSession);
+          setUser(currentSession.user);
+        } else {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+        }
       } else {
+        setSession(null);
+        setUser(null);
         setProfile(null);
       }
     } catch {
@@ -91,12 +113,19 @@ export default function AuthProvider({ children }) {
     if (!supabase) return;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      setSession(newSession);
-      setUser(newSession?.user ?? null);
-
       if (newSession?.user) {
-        await fetchProfile(newSession.user.id);
+        const fetchedProf = await fetchProfile(newSession.user.id);
+        if (fetchedProf && fetchedProf.business_id) {
+          setSession(newSession);
+          setUser(newSession.user);
+        } else {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+        }
       } else {
+        setSession(null);
+        setUser(null);
         setProfile(null);
       }
       setLoading(false);
@@ -110,10 +139,23 @@ export default function AuthProvider({ children }) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) return { data: null, error };
 
-    setSession(data.session);
-    setUser(data.user);
-    if (data.user) {
-      await fetchProfile(data.user.id);
+    if (data?.user) {
+      const fetchedProf = await fetchProfile(data.user.id);
+      if (!fetchedProf || !fetchedProf.business_id) {
+        await supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        if (window.api && window.api.clearAuthSession) {
+          window.api.clearAuthSession();
+        }
+        return {
+          data: null,
+          error: new Error('Your account access has been revoked by the business owner.')
+        };
+      }
+      setSession(data.session);
+      setUser(data.user);
     }
     return { data, error: null };
   };

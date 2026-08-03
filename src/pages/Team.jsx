@@ -76,6 +76,23 @@ export default function Team() {
     }
   };
 
+  const handleRevokeMember = async (memberId, memberName) => {
+    if (!window.confirm(`Are you sure you want to revoke access for ${memberName}?`)) return;
+    try {
+      const { error } = await supabase
+        .from('business_members')
+        .delete()
+        .eq('id', memberId);
+
+      if (error) throw error;
+
+      setTeam(team.filter(m => m.id !== memberId));
+      addToast('success', `Revoked access for ${memberName}.`);
+    } catch (err) {
+      addToast('error', err.message || 'Failed to revoke member access');
+    }
+  };
+
   const getBaseWebUrl = () => {
     if (import.meta.env.VITE_APP_URL) {
       return import.meta.env.VITE_APP_URL.replace(/\/$/, '');
@@ -175,12 +192,21 @@ export default function Team() {
                 <p className="font-medium text-gray-900">{member.profiles?.full_name || 'No Name'}</p>
                 <p className="text-sm text-gray-500">{member.profiles?.email}</p>
               </div>
-              <div>
+              <div className="flex items-center gap-3">
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
                   ${member.role === 'owner' ? 'bg-purple-100 text-purple-800' : 
                     member.role === 'manager' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>
                   {member.role}
                 </span>
+
+                {profile?.role === 'owner' && member.profile_id !== profile?.id && (
+                  <Button
+                    variant="danger"
+                    onClick={() => handleRevokeMember(member.id, member.profiles?.full_name || member.profiles?.email)}
+                  >
+                    Revoke Access
+                  </Button>
+                )}
               </div>
             </div>
           ))}
