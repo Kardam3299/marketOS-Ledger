@@ -19,8 +19,8 @@ export function useSync() {
         const res = await api.getSyncStatus();
         if (res) setSyncStatus(res);
       }
-    } catch (err) {
-      console.error('Error getting sync status:', err);
+    } catch {
+      // Sync status error fallback
     }
   }, []);
 
@@ -65,7 +65,6 @@ export function useSync() {
       return res;
     } catch (err) {
       toastError('Error triggering sync: ' + (err.message || err));
-      console.error(err);
       return { success: false, error: err.message };
     } finally {
       setLoading(false);

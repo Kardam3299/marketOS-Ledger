@@ -39,7 +39,7 @@
     "productName": "MarketOS Ledger",
     "files": [
       "dist/**/*",
-      "electron/main.cjs"
+      "electron/**/*"
     ],
     "directories": {
       "buildResources": "assets"
@@ -50,9 +50,11 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "portable"
-      ]
+        "dir"
+      ],
+      "forceCodeSigning": false,
+      "sign": null,
+      "signAndEditExecutable": false
     }
   }
 }

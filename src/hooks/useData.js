@@ -17,9 +17,8 @@ export const useTransactions = (filters = {}) => {
       } else {
         error(result.error || 'Failed to fetch transactions');
       }
-    } catch (err) {
+    } catch {
       error('An error occurred while fetching transactions');
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -54,9 +53,8 @@ export const useDashboardStats = () => {
       } else {
         error(result.error || 'Failed to fetch dashboard stats');
       }
-    } catch (err) {
+    } catch {
       error('An error occurred while fetching dashboard stats');
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -89,9 +87,8 @@ export const useSettings = () => {
       } else {
         error(result.error || 'Failed to fetch settings');
       }
-    } catch (err) {
+    } catch {
       error('An error occurred while fetching settings');
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -110,9 +107,8 @@ export const useSettings = () => {
         error(result.error || 'Failed to update settings');
         return false;
       }
-    } catch (err) {
+    } catch {
       error('An error occurred while updating settings');
-      console.error(err);
       return false;
     } finally {
       setLoading(false);
@@ -140,9 +136,8 @@ export const useReportData = (startDate, endDate) => {
       } else {
         error(result.error || 'Failed to fetch report data');
       }
-    } catch (err) {
+    } catch {
       error('An error occurred while fetching report data');
-      console.error(err);
     } finally {
       setLoading(false);
     }

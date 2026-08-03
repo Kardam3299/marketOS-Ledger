@@ -14,8 +14,8 @@ export const useToast = () => {
 export default function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
-  const showToast = useCallback((message, type = TOAST_TYPES.SUCCESS, duration = 3000) => {
-    const id = Date.now();
+  const addToastInternal = useCallback((message, type = TOAST_TYPES.SUCCESS, duration = 3000) => {
+    const id = Date.now() + Math.random();
     const newToast = { id, message, type };
 
     setToasts((prev) => [...prev, newToast]);
@@ -33,27 +33,51 @@ export default function ToastProvider({ children }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const handleToast = useCallback((arg1, arg2, duration) => {
+    if (!arg1) return;
+
+    if (typeof arg1 === 'object') {
+      const { message, type = TOAST_TYPES.SUCCESS, duration: dur = 3000 } = arg1;
+      return addToastInternal(message, type, dur);
+    }
+
+    const validTypes = Object.values(TOAST_TYPES);
+    if (typeof arg1 === 'string' && validTypes.includes(arg1.toLowerCase())) {
+      const type = arg1.toLowerCase();
+      const message = typeof arg2 === 'string' ? arg2 : String(arg2 || '');
+      return addToastInternal(message, type, duration || 3000);
+    } else {
+      const message = String(arg1 || '');
+      const type = (typeof arg2 === 'string' && validTypes.includes(arg2.toLowerCase())) ? arg2.toLowerCase() : TOAST_TYPES.SUCCESS;
+      return addToastInternal(message, type, duration || 3000);
+    }
+  }, [addToastInternal]);
+
+  const showToast = useCallback((arg1, arg2, duration) => handleToast(arg1, arg2, duration), [handleToast]);
+  const addToast = useCallback((arg1, arg2, duration) => handleToast(arg1, arg2, duration), [handleToast]);
+
   const success = useCallback((message, duration) => {
-    showToast(message, TOAST_TYPES.SUCCESS, duration);
-  }, [showToast]);
+    return addToastInternal(message, TOAST_TYPES.SUCCESS, duration || 3000);
+  }, [addToastInternal]);
 
   const error = useCallback((message, duration) => {
-    showToast(message, TOAST_TYPES.ERROR, duration);
-  }, [showToast]);
+    return addToastInternal(message, TOAST_TYPES.ERROR, duration || 3000);
+  }, [addToastInternal]);
 
   const info = useCallback((message, duration) => {
-    showToast(message, TOAST_TYPES.INFO, duration);
-  }, [showToast]);
+    return addToastInternal(message, TOAST_TYPES.INFO, duration || 3000);
+  }, [addToastInternal]);
 
   const warning = useCallback((message, duration) => {
-    showToast(message, TOAST_TYPES.WARNING, duration);
-  }, [showToast]);
+    return addToastInternal(message, TOAST_TYPES.WARNING, duration || 3000);
+  }, [addToastInternal]);
 
   return (
     <ToastContext.Provider
       value={{
         toasts,
         showToast,
+        addToast,
         removeToast,
         success,
         error,

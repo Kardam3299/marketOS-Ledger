@@ -19,6 +19,9 @@ const {
   handleResetDatabase,
   handleGetDashboardStats,
   handleGetReportData,
+  handleSetAuthSession,
+  handleClearAuthSession,
+  handleClearPendingQueue,
 } = require('./ipcHandlers.cjs');
 const {
   setMainWindow,
@@ -46,10 +49,13 @@ const createWindow = () => {
   });
 
   setMainWindow(mainWindow);
+  mainWindow.webContents.openDevTools({
+    mode: "detach"
+  });
 
-  const isDev = process.env.NODE_ENV === 'development' || 
-                process.env.ELECTRON_DEV === 'true' ||
-                !fs.existsSync(path.join(__dirname, '../dist'));
+  const isDev = process.env.NODE_ENV === 'development' ||
+    process.env.ELECTRON_DEV === 'true' ||
+    !fs.existsSync(path.join(__dirname, '../dist'));
 
   if (isDev) {
     // Development: load from local dev server
@@ -88,11 +94,16 @@ const initializeApp = () => {
   ipcMain.handle('trigger-sync', handleTriggerSync);
   ipcMain.handle('test-sync-connection', handleTestSyncConnection);
   ipcMain.handle('notify-online', handleNotifyOnline);
+  ipcMain.handle('clear-pending-queue', handleClearPendingQueue);
 
   // Backup/Restore handlers
   ipcMain.handle('backup-database', handleBackupDatabase);
   ipcMain.handle('restore-database', handleRestoreDatabase);
   ipcMain.handle('reset-database', handleResetDatabase);
+
+  // Authentication handlers
+  ipcMain.on('set-auth-session', handleSetAuthSession);
+  ipcMain.on('clear-auth-session', handleClearAuthSession);
 };
 
 app.on('ready', () => {

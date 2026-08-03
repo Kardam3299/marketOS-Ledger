@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   triggerSync: () => ipcRenderer.invoke('trigger-sync'),
   testSyncConnection: (credentials) => ipcRenderer.invoke('test-sync-connection', credentials),
   notifyOnline: () => ipcRenderer.invoke('notify-online'),
+  clearPendingQueue: () => ipcRenderer.invoke('clear-pending-queue'),
   onSyncStatusChange: (callback) => {
     const handler = (_event, value) => callback(value);
     ipcRenderer.on('sync-status-changed', handler);
@@ -29,4 +30,8 @@ contextBridge.exposeInMainWorld('api', {
   backupDatabase: () => ipcRenderer.invoke('backup-database'),
   restoreDatabase: () => ipcRenderer.invoke('restore-database'),
   resetDatabase: () => ipcRenderer.invoke('reset-database'),
+
+  // Authentication
+  setAuthSession: (session, profile) => ipcRenderer.send('set-auth-session', { session, profile }),
+  clearAuthSession: () => ipcRenderer.send('clear-auth-session'),
 });

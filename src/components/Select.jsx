@@ -26,11 +26,16 @@ export default function Select({
         {...props}
       >
         <option value="">Select an option</option>
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
+        {options.map((option, idx) => {
+          const isObj = typeof option === 'object' && option !== null;
+          const val = isObj ? option.value : option;
+          const labelText = isObj ? (option.label || option.value) : option;
+          return (
+            <option key={val ?? idx} value={val}>
+              {labelText}
+            </option>
+          );
+        })}
       </select>
       {error && <p className="text-sm text-red-600">{error}</p>}
     </div>

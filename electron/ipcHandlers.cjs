@@ -1,5 +1,5 @@
-const { getDatabase, addToPendingQueue, getSettings, updateSettingsInStore } = require('./database.cjs');
-const { getSyncStatus, testConnection, syncNow, broadcastSyncStatus } = require('./syncService.cjs');
+const { getDatabase, addToPendingQueue, getSettings, updateSettingsInStore, setBusinessContext, getCurrentBusinessContext, setPendingQueue } = require('./database.cjs');
+const { getSyncStatus, testConnection, syncNow, broadcastSyncStatus, setAuthSession, clearAuthSession } = require('./syncService.cjs');
 const dayjs = require('dayjs');
 const fs = require('fs');
 const path = require('path');
@@ -26,8 +26,14 @@ const handleAddTransaction = (event, transaction) => {
       now
     );
 
+    const { businessId, userId } = getCurrentBusinessContext();
+
     const insertedTransaction = {
       id: result.lastInsertRowid,
+      business_id: businessId || null,
+      created_by: userId || null,
+      updated_by: userId || null,
+      is_deleted: false,
       date: transaction.date,
       type: transaction.type,
       category: transaction.category,
@@ -94,11 +100,24 @@ const handleGetTransactions = (event, filters = {}) => {
 const handleDeleteTransaction = (event, id) => {
   try {
     const db = getDatabase();
+    
+    // We get the transaction from the full store (without the filter) since it might be soft deleted soon
+    // Or we can just get it before delete
+    const tx = db.prepare('SELECT * FROM transactions').all().find(t => t.id === id);
+    
     const stmt = db.prepare('DELETE FROM transactions WHERE id = ?');
     stmt.run(id);
 
-    addToPendingQueue('DELETE', { id });
-    broadcastSyncStatus();
+    if (tx) {
+      // Create the soft-deleted version
+      const softDeletedTx = {
+        ...tx,
+        is_deleted: true,
+        deleted_at: new Date().toISOString()
+      };
+      addToPendingQueue('UPSERT', softDeletedTx);
+      broadcastSyncStatus();
+    }
 
     const settings = getSettings();
     if (settings.cloud_sync_enabled) {
@@ -412,6 +431,31 @@ const handleResetDatabase = (event) => {
   }
 };
 
+const handleSetAuthSession = (event, data) => {
+  if (data && data.session) {
+    setAuthSession(data.session);
+  }
+  if (data && data.profile && data.profile.business_id) {
+    setBusinessContext(data.profile.business_id, data.profile.id);
+  }
+};
+
+const handleClearAuthSession = (event) => {
+  clearAuthSession();
+  setBusinessContext(null, null);
+};
+
+const handleClearPendingQueue = () => {
+  try {
+    setPendingQueue([]);
+    broadcastSyncStatus();
+    return { success: true };
+  } catch (error) {
+    console.error('Error clearing pending queue:', error);
+    return { success: false, error: error.message };
+  }
+};
+
 module.exports = {
   handleAddTransaction,
   handleGetTransactions,
@@ -429,4 +473,7 @@ module.exports = {
   handleResetDatabase,
   handleGetDashboardStats,
   handleGetReportData,
+  handleSetAuthSession,
+  handleClearAuthSession,
+  handleClearPendingQueue,
 };

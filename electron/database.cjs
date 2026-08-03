@@ -4,6 +4,8 @@ const { app } = require('electron');
 const { randomUUID } = require('crypto');
 
 let store = null;
+let currentBusinessId = null;
+let currentUserId = null;
 
 const defaultSettings = {
   id: 1,
@@ -68,8 +70,68 @@ const initializeDatabase = () => {
   return store;
 };
 
-const getTransactions = () => store.get('transactions', []);
-const setTransactions = (transactions) => store.set('transactions', transactions);
+const setBusinessContext = (businessId, userId) => {
+  currentBusinessId = businessId;
+  currentUserId = userId;
+  
+  if (businessId && store) {
+    const txs = store.get('transactions', []);
+    let modified = false;
+    const migratedTxs = txs.map((tx) => {
+      if (!tx.business_id) {
+        modified = true;
+        return { 
+          ...tx, 
+          business_id: businessId, 
+          created_by: userId, 
+          updated_by: userId,
+          is_deleted: false,
+          deleted_at: null,
+          deleted_by: null 
+        };
+      }
+      return tx;
+    });
+    
+    if (modified) {
+      store.set('transactions', migratedTxs);
+      
+      // Also update pending queue items to have business_id if missing
+      const queue = store.get('pendingQueue', []);
+      let qModified = false;
+      const newQueue = queue.map(q => {
+        if (q.action === 'UPSERT' && q.data && !q.data.business_id) {
+          qModified = true;
+          return { ...q, data: { ...q.data, business_id: businessId, created_by: userId, updated_by: userId, is_deleted: false } };
+        }
+        return q;
+      });
+      if (qModified) {
+        store.set('pendingQueue', newQueue);
+      }
+    }
+  }
+};
+
+const getTransactions = () => {
+  const allTxs = store.get('transactions', []);
+  if (currentBusinessId) {
+    // Exclude deleted transactions when queried
+    return allTxs.filter(tx => tx.business_id === currentBusinessId && !tx.is_deleted);
+  }
+  return allTxs.filter(tx => !tx.is_deleted);
+};
+
+const setTransactions = (transactions) => {
+  // We need to merge with other business transactions if we are filtering
+  if (currentBusinessId) {
+    const allTxs = store.get('transactions', []);
+    const otherTxs = allTxs.filter(tx => tx.business_id !== currentBusinessId);
+    store.set('transactions', [...otherTxs, ...transactions]);
+  } else {
+    store.set('transactions', transactions);
+  }
+};
 
 const generateUuid = () => randomUUID();
 
@@ -131,18 +193,6 @@ const addToPendingQueue = (action, item) => {
 const createStatement = (query) => {
   const normalized = query.replace(/\s+/g, ' ').trim().toLowerCase();
 
-  const queryTransactions = () => {
-    let results = [...getTransactions()];
-    const values = [];
-    const matches = normalized.match(/\?+/g) || [];
-    // preserve parameter order
-    return {
-      filter: (mapper) => {
-        const params = [...arguments[0]];
-      },
-    };
-  };
-
   const applyTransactionFilters = (params) => {
     let results = [...getTransactions()];
     const values = [...params];
@@ -202,6 +252,12 @@ const createStatement = (query) => {
         const newId = randomUUID();
         const transaction = {
           id: newId,
+          business_id: currentBusinessId,
+          created_by: currentUserId,
+          updated_by: currentUserId,
+          is_deleted: false,
+          deleted_at: null,
+          deleted_by: null,
           date,
           type,
           category,
@@ -218,20 +274,32 @@ const createStatement = (query) => {
 
       if (normalized.startsWith('delete from transactions where id = ?')) {
         const [id] = params;
-        const transactions = getTransactions().filter((transaction) => transaction.id !== id);
-        setTransactions(transactions);
+        // Soft delete instead of hard delete
+        const transactions = store.get('transactions', []).map((transaction) => {
+          if (transaction.id === id) {
+             return { ...transaction, is_deleted: true, deleted_at: new Date().toISOString(), deleted_by: currentUserId };
+          }
+          return transaction;
+        });
+        store.set('transactions', transactions);
         return { changes: 1 };
       }
 
       if (normalized === 'delete from transactions') {
-        const oldCount = getTransactions().length;
-        setTransactions([]);
-        return { changes: oldCount };
+        const txs = store.get('transactions', []);
+        const transactions = txs.map(tx => {
+            if (tx.business_id === currentBusinessId) {
+                return { ...tx, is_deleted: true, deleted_at: new Date().toISOString(), deleted_by: currentUserId };
+            }
+            return tx;
+        });
+        store.set('transactions', transactions);
+        return { changes: txs.length };
       }
 
       if (normalized.startsWith('update transactions')) {
         const [date, type, category, amount, payment_mode, description, updated_at, id] = params;
-        const transactions = getTransactions().map((transaction) => {
+        const transactions = store.get('transactions', []).map((transaction) => {
           if (transaction.id !== id) return transaction;
           return {
             ...transaction,
@@ -242,9 +310,10 @@ const createStatement = (query) => {
             payment_mode,
             description,
             updated_at,
+            updated_by: currentUserId
           };
         });
-        setTransactions(transactions);
+        store.set('transactions', transactions);
         return { changes: 1 };
       }
 
@@ -309,6 +378,11 @@ const closeDatabase = () => {
   store = null;
 };
 
+const getCurrentBusinessContext = () => ({
+  businessId: currentBusinessId,
+  userId: currentUserId
+});
+
 module.exports = {
   initializeDatabase,
   getDatabase,
@@ -321,4 +395,6 @@ module.exports = {
   getPendingQueue,
   setPendingQueue,
   addToPendingQueue,
+  setBusinessContext,
+  getCurrentBusinessContext,
 };

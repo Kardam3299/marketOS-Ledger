@@ -122,6 +122,20 @@ export default function Settings() {
     }
   };
 
+  const handleClearPendingQueue = async () => {
+    try {
+      const res = await api.clearPendingQueue();
+      if (res && res.success) {
+        success('Pending queue cleared successfully!');
+        if (fetchStatus) fetchStatus();
+      } else {
+        error(res?.error || 'Failed to clear pending queue');
+      }
+    } catch (err) {
+      error('Error clearing pending queue: ' + (err.message || err));
+    }
+  };
+
   const handleBackupDatabase = async () => {
     try {
       const result = await api.backupDatabase();
@@ -283,7 +297,13 @@ export default function Settings() {
             placeholder="eyJhbGciOi..."
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200 text-sm">
+            <div>
+              <span className="text-gray-500 font-medium">Status:</span>{' '}
+              <span className="font-semibold text-gray-800 capitalize">
+                {syncStatus.status || 'Offline'}
+              </span>
+            </div>
             <div>
               <span className="text-gray-500 font-medium">Last Sync Time:</span>{' '}
               <span className="font-semibold text-gray-800">
@@ -293,7 +313,7 @@ export default function Settings() {
               </span>
             </div>
             <div>
-              <span className="text-gray-500 font-medium">Pending Queue Count:</span>{' '}
+              <span className="text-gray-500 font-medium">Pending Queue:</span>{' '}
               <span className="font-semibold text-gray-800">
                 {syncStatus.pendingCount || 0} item(s)
               </span>
@@ -337,6 +357,17 @@ export default function Settings() {
             >
               Sync Now
             </Button>
+
+            {syncStatus.pendingCount > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleClearPendingQueue}
+                className="w-full sm:w-auto text-red-600 border-red-200 hover:bg-red-50"
+              >
+                Clear Pending Queue
+              </Button>
+            )}
           </div>
         </form>
       </Card>

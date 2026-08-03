@@ -14,12 +14,14 @@ const {
   updateSettingsInStore,
   getPendingQueue,
   setPendingQueue,
+  getCurrentBusinessContext,
 } = require('./database.cjs');
 
 let supabaseClient = null;
-let currentClientConfig = { url: '', key: '' };
+let currentClientConfig = { url: '', key: '', token: '' };
 let autoSyncInterval = null;
 let mainWindowRef = null;
+let authSession = null;
 
 let syncStatus = {
   status: 'offline', // 'synced', 'syncing', 'offline', 'pending', 'error'
@@ -31,6 +33,19 @@ let syncStatus = {
 
 function setMainWindow(win) {
   mainWindowRef = win;
+}
+
+function setAuthSession(session) {
+  authSession = session;
+  // Clear the client so it gets re-instantiated with the new token
+  supabaseClient = null;
+  currentClientConfig.token = session ? session.access_token : '';
+}
+
+function clearAuthSession() {
+  authSession = null;
+  supabaseClient = null;
+  currentClientConfig.token = '';
 }
 
 function broadcastSyncStatus() {
@@ -66,22 +81,28 @@ function getSupabaseClient(url, key) {
   const settings = getSettings();
   const targetUrl = url || settings.supabase_url;
   const targetKey = key || settings.supabase_anon_key;
+  const targetToken = authSession ? authSession.access_token : '';
 
   if (!targetUrl || !targetKey) return null;
 
   if (
     supabaseClient &&
     currentClientConfig.url === targetUrl &&
-    currentClientConfig.key === targetKey
+    currentClientConfig.key === targetKey &&
+    currentClientConfig.token === targetToken
   ) {
     return supabaseClient;
   }
 
   try {
-    supabaseClient = createClient(targetUrl, targetKey, {
+    const options = {
       auth: { persistSession: false, autoRefreshToken: false },
-    });
-    currentClientConfig = { url: targetUrl, key: targetKey };
+    };
+    if (targetToken) {
+      options.global = { headers: { Authorization: `Bearer ${targetToken}` } };
+    }
+    supabaseClient = createClient(targetUrl, targetKey, options);
+    currentClientConfig = { url: targetUrl, key: targetKey, token: targetToken };
     return supabaseClient;
   } catch (err) {
     console.error('Failed to create Supabase client:', err);
@@ -162,9 +183,42 @@ async function syncNow() {
     for (const item of queue) {
       try {
         if (item.action === 'UPSERT') {
+          let upsertPayload = { ...item.data };
+          if (!upsertPayload.business_id) {
+            const ctx = getCurrentBusinessContext();
+            let bizId = ctx?.businessId;
+            let uId = ctx?.userId;
+
+            if (!bizId) {
+              try {
+                const { data: member } = await client
+                  .from('business_members')
+                  .select('business_id, profile_id')
+                  .eq('status', 'active')
+                  .limit(1)
+                  .maybeSingle();
+
+                if (member) {
+                  bizId = member.business_id;
+                  uId = uId || member.profile_id;
+                }
+              } catch (e) {
+                console.error('Error fetching member business_id:', e);
+              }
+            }
+
+            if (bizId) {
+              upsertPayload.business_id = bizId;
+              upsertPayload.created_by = upsertPayload.created_by || uId || null;
+              upsertPayload.updated_by = upsertPayload.updated_by || uId || null;
+              upsertPayload.is_deleted = upsertPayload.is_deleted ?? false;
+              item.data = { ...upsertPayload };
+            }
+          }
+
           const { error: upsertErr } = await client
             .from('transactions')
-            .upsert(item.data);
+            .upsert(upsertPayload);
           if (upsertErr) {
             console.error('Error pushing upsert item:', upsertErr);
             remainingQueue.push(item);
@@ -187,56 +241,57 @@ async function syncNow() {
 
     setPendingQueue(remainingQueue);
 
-    // 3. Process Remote Data & Conflict Resolution (Newest record wins by updated_at)
+    // 3. Process Remote Data & Bi-Directional Synchronization
     const localTxs = getTransactions();
-    const localTxMap = new Map(localTxs.map((t) => [t.id, t]));
-    const pendingDeleteIds = new Set(
-      remainingQueue.filter((q) => q.action === 'DELETE').map((q) => q.id)
-    );
-    const pendingUpsertIds = new Set(
-      remainingQueue.filter((q) => q.action === 'UPSERT').map((q) => q.data.id)
-    );
-
-    let updatedLocalTxs = [...localTxs];
-    let localChanged = false;
+    const ctx = getCurrentBusinessContext();
 
     if (remoteTxs && Array.isArray(remoteTxs)) {
-      const remoteIds = new Set(remoteTxs.map(t => t.id));
+      const remoteTxMap = new Map(remoteTxs.map((t) => [t.id, t]));
+      const localTxMap = new Map(localTxs.map((t) => [t.id, t]));
+      let updatedLocalTxs = [...localTxs];
+      let localChanged = false;
 
-      if (!settings.last_sync_time) {
-        // Initial sync: Push all local transactions to Supabase
-        for (const localItem of localTxs) {
-          if (!remoteIds.has(localItem.id) && !pendingDeleteIds.has(localItem.id)) {
-            const { error: pushErr } = await client.from('transactions').upsert(localItem);
-            if (!pushErr) {
-              remoteIds.add(localItem.id);
-            } else {
-              console.error('Initial sync push error:', pushErr);
-            }
-          }
-        }
-      } else {
-        // Subsequent syncs: Handle remote deletions
-        for (const localItem of localTxs) {
-          if (!remoteIds.has(localItem.id) && !pendingUpsertIds.has(localItem.id)) {
-            // Local item missing from remote, and not pending to be uploaded -> deleted on remote
-            updatedLocalTxs = updatedLocalTxs.filter((t) => t.id !== localItem.id);
-            localChanged = true;
+      // A) Ensure all active local transactions exist on Supabase (Push missing local items)
+      for (const localItem of localTxs) {
+        if (localItem.is_deleted) continue;
+
+        const remoteItem = remoteTxMap.get(localItem.id);
+        if (!remoteItem) {
+          const bizId = localItem.business_id || ctx?.businessId || null;
+          const uId = localItem.created_by || ctx?.userId || null;
+          const payload = {
+            ...localItem,
+            business_id: bizId,
+            created_by: uId,
+            updated_by: uId,
+            is_deleted: false,
+          };
+          const { error: pushErr } = await client.from('transactions').upsert(payload);
+          if (pushErr) {
+            console.error('Error pushing local transaction to cloud:', pushErr);
           }
         }
       }
 
+      // B) Sync remote transactions to local store
       for (const remoteItem of remoteTxs) {
-        if (pendingDeleteIds.has(remoteItem.id)) continue;
-
         const localItem = localTxMap.get(remoteItem.id);
+
+        if (remoteItem.is_deleted) {
+          if (localItem && !localItem.is_deleted) {
+            const index = updatedLocalTxs.findIndex((t) => t.id === remoteItem.id);
+            if (index !== -1) {
+              updatedLocalTxs[index] = { ...localItem, is_deleted: true };
+              localChanged = true;
+            }
+          }
+          continue;
+        }
+
         if (!localItem) {
-          // New record from cloud -> insert to local electron-store
-          // But only if it's not a fresh install pushing everything... wait, if it's fresh install, we want to download remote items too
           updatedLocalTxs.push(remoteItem);
           localChanged = true;
         } else {
-          // Conflict Resolution: compare updated_at timestamps
           const remoteTime = new Date(
             remoteItem.updated_at || remoteItem.created_at || 0
           ).getTime();
@@ -245,18 +300,20 @@ async function syncNow() {
           ).getTime();
 
           if (remoteTime > localTime) {
-            // Cloud record is newer -> update local
             const index = updatedLocalTxs.findIndex((t) => t.id === remoteItem.id);
             if (index !== -1) {
               updatedLocalTxs[index] = remoteItem;
               localChanged = true;
             }
           } else if (localTime > remoteTime) {
-            // Local record is newer -> push local record to cloud if not already in queue
-            const inQueue = pendingUpsertIds.has(localItem.id);
-            if (!inQueue) {
-              await client.from('transactions').upsert(localItem);
-            }
+            const bizId = localItem.business_id || ctx?.businessId || null;
+            const uId = localItem.updated_by || ctx?.userId || null;
+            const payload = {
+              ...localItem,
+              business_id: bizId,
+              updated_by: uId,
+            };
+            await client.from('transactions').upsert(payload);
           }
         }
       }
@@ -274,6 +331,8 @@ async function syncNow() {
     if (finalQueue.length > 0) {
       syncStatus.status = 'pending';
       syncStatus.error = 'Some pending items could not be pushed to cloud.';
+      broadcastSyncStatus();
+      return { success: false, error: syncStatus.error };
     } else {
       syncStatus.status = 'synced';
       syncStatus.error = null;
@@ -316,4 +375,6 @@ module.exports = {
   startAutoSync,
   stopAutoSync,
   broadcastSyncStatus,
+  setAuthSession,
+  clearAuthSession,
 };
