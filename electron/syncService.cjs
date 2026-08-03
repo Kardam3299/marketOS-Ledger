@@ -79,8 +79,8 @@ function getSyncStatus() {
 
 function getSupabaseClient(url, key) {
   const settings = getSettings();
-  const targetUrl = url || settings.supabase_url;
-  const targetKey = key || settings.supabase_anon_key;
+  const targetUrl = url || settings.supabase_url || process.env.VITE_SUPABASE_URL;
+  const targetKey = key || settings.supabase_anon_key || process.env.VITE_SUPABASE_ANON_KEY;
   const targetToken = authSession ? authSession.access_token : '';
 
   if (!targetUrl || !targetKey) return null;

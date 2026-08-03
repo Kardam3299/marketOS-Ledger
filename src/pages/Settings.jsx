@@ -41,9 +41,9 @@ export default function Settings() {
         currency: settings.currency || 'USD',
       });
       setSyncFormData({
-        cloud_sync_enabled: Boolean(settings.cloud_sync_enabled),
-        supabase_url: settings.supabase_url || '',
-        supabase_anon_key: settings.supabase_anon_key || '',
+        cloud_sync_enabled: settings.cloud_sync_enabled !== false,
+        supabase_url: settings.supabase_url || import.meta.env.VITE_SUPABASE_URL || '',
+        supabase_anon_key: settings.supabase_anon_key || import.meta.env.VITE_SUPABASE_ANON_KEY || '',
       });
     }
   }, [settings]);
