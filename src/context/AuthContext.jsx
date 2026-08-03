@@ -216,12 +216,17 @@ export default function AuthProvider({ children }) {
   const signUpWithInvite = async (email, password, name, token) => {
     if (!supabase) throw new Error('Supabase client not initialized');
 
-    const { data: invite, error: inviteError } = await supabase
-      .rpc('verify_invitation', { invite_token: token })
-      .single();
+    // 1. Verify invitation token via RPC
+    const { data: invites, error: inviteError } = await supabase
+      .rpc('verify_invitation', { invite_token: token });
 
-    if (inviteError || !invite) throw new Error('Invalid or expired invitation token');
+    if (inviteError || !invites || invites.length === 0) {
+      throw new Error('Invalid, expired, or already used invitation token');
+    }
 
+    const invite = invites[0];
+
+    // 2. SignUp auth user
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email,
       password,
@@ -229,33 +234,47 @@ export default function AuthProvider({ children }) {
         data: { full_name: name }
       }
     });
+
     if (authError) throw authError;
 
+    // 3. Obtain authenticated session
     let currentSession = authData?.session;
+    if (!currentSession) {
+      const { data: sessionRes } = await supabase.auth.getSession();
+      currentSession = sessionRes?.session;
+    }
+
     if (!currentSession) {
       const { data: signInData } = await supabase.auth.signInWithPassword({ email, password });
       currentSession = signInData?.session;
     }
 
-    if (authData?.user) {
-      const { error: memberError } = await supabase
-        .from('business_members')
-        .insert([{
-          business_id: invite.business_id,
-          profile_id: authData.user.id,
-          role: invite.role,
-          status: 'active'
-        }]);
-      if (memberError) throw memberError;
-
-      await supabase.from('invitations').update({ status: 'accepted' }).eq('id', invite.id);
+    if (!currentSession || !currentSession.user) {
+      throw new Error('No authenticated session exists after sign up. Please check your email or sign in.');
     }
 
-    if (currentSession?.user) {
-      setSession(currentSession);
-      setUser(currentSession.user);
-      await fetchProfile(currentSession.user.id);
+    // 4. Create business member link with active authenticated session
+    const { error: memberError } = await supabase
+      .from('business_members')
+      .upsert({
+        business_id: invite.business_id,
+        profile_id: currentSession.user.id,
+        role: invite.role || 'staff',
+        status: 'active'
+      }, { onConflict: 'business_id,profile_id' });
+
+    if (memberError) {
+      console.error('Error creating business_member:', memberError);
+      throw new Error(`Failed to join team: ${memberError.message}`);
     }
+
+    // 5. Update invitation status to accepted
+    await supabase.from('invitations').update({ status: 'accepted' }).eq('id', invite.id);
+
+    // 6. Refresh auth state
+    setSession(currentSession);
+    setUser(currentSession.user);
+    await fetchProfile(currentSession.user.id);
 
     return { data: authData, error: null };
   };

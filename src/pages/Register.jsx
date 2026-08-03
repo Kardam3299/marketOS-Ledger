@@ -30,6 +30,9 @@ export default function Register() {
           setIsTokenValid(false);
         } else {
           setIsTokenValid(true);
+          if (data[0] && data[0].email) {
+            setEmail(data[0].email);
+          }
         }
       } catch (err) {
         setIsTokenValid(false);
