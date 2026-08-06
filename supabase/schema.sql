@@ -292,7 +292,7 @@ CREATE POLICY "Users insert own profile" ON public.profiles
 -- C. Business Members Policies
 -- ------------------------------------------------------------------------------
 CREATE POLICY "Members view team" ON public.business_members 
-    FOR SELECT USING (is_business_member(business_id));
+    FOR SELECT USING (profile_id = auth.uid() OR is_business_member(business_id));
 
 CREATE POLICY "Owners manage team" ON public.business_members 
     FOR ALL USING (get_user_role(business_id) = 'owner');

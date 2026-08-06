@@ -11,6 +11,7 @@ export default function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [isInitialized, setIsInitialized] = useState(null);
   const [loading, setLoading] = useState(true);
+  const isSigningUpRef = React.useRef(false);
 
   const fetchProfile = useCallback(async (userId) => {
     if (!supabase || !userId) return null;
@@ -31,7 +32,8 @@ export default function AuthProvider({ children }) {
       const { data: systemInit } = await supabase.rpc('check_system_initialized');
 
       // If system initialized and user has no active business membership -> Revoked User
-      if (systemInit && (!membershipData || !membershipData.business_id)) {
+      // Skip automatic signout if invite signup is actively in progress
+      if (systemInit && (!membershipData || !membershipData.business_id) && !isSigningUpRef.current) {
         await supabase.auth.signOut();
         setSession(null);
         setUser(null);
@@ -88,7 +90,7 @@ export default function AuthProvider({ children }) {
         if (fetchedProf && fetchedProf.business_id) {
           setSession(currentSession);
           setUser(currentSession.user);
-        } else {
+        } else if (!isSigningUpRef.current) {
           setSession(null);
           setUser(null);
           setProfile(null);
@@ -113,6 +115,9 @@ export default function AuthProvider({ children }) {
     if (!supabase) return;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+      if (isSigningUpRef.current) {
+        return;
+      }
       if (newSession?.user) {
         const fetchedProf = await fetchProfile(newSession.user.id);
         if (fetchedProf && fetchedProf.business_id) {
@@ -215,68 +220,83 @@ export default function AuthProvider({ children }) {
 
   const signUpWithInvite = async (email, password, name, token) => {
     if (!supabase) throw new Error('Supabase client not initialized');
+    isSigningUpRef.current = true;
 
-    // 1. Verify invitation token via RPC
-    const { data: invites, error: inviteError } = await supabase
-      .rpc('verify_invitation', { invite_token: token });
+    try {
+      // 1. Verify invitation token via RPC
+      const { data: invites, error: inviteError } = await supabase
+        .rpc('verify_invitation', { invite_token: token });
 
-    if (inviteError || !invites || invites.length === 0) {
-      throw new Error('Invalid, expired, or already used invitation token');
-    }
-
-    const invite = invites[0];
-
-    // 2. SignUp auth user
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: name }
+      if (inviteError || !invites || invites.length === 0) {
+        throw new Error('Invalid, expired, or already used invitation token');
       }
-    });
 
-    if (authError) throw authError;
+      const invite = invites[0];
 
-    // 3. Obtain authenticated session
-    let currentSession = authData?.session;
-    if (!currentSession) {
-      const { data: sessionRes } = await supabase.auth.getSession();
-      currentSession = sessionRes?.session;
+      // 2. Create user account via signUp
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: name }
+        }
+      });
+
+      if (authError && !authError.message.toLowerCase().includes('already registered') && authError.status !== 400) {
+        throw authError;
+      }
+
+      // 3. Authenticate IMMEDIATELY so Supabase client attaches the Bearer token for RLS REST calls
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError || !signInData?.session) {
+        throw new Error(signInError?.message || 'Failed to authenticate newly created account. Please sign in with your email and password.');
+      }
+
+      const currentSession = signInData.session;
+      const authUser = signInData.user;
+
+      // 4. Create profile record (Authenticated request)
+      try {
+        await supabase.from('profiles').upsert({
+          id: authUser.id,
+          email: email,
+          full_name: name
+        }, { onConflict: 'id' });
+      } catch {
+        // Ignore if handled by trigger
+      }
+
+      // 5. Insert business_members record (Authenticated request using insert, NOT upsert)
+      const { error: memberError } = await supabase
+        .from('business_members')
+        .insert([{
+          business_id: invite.business_id,
+          profile_id: authUser.id,
+          role: invite.role || 'staff',
+          status: 'active'
+        }]);
+
+      if (memberError && !memberError.message.includes('duplicate key')) {
+        console.error('Error creating business_member:', memberError);
+        throw new Error(`Failed to join team: ${memberError.message}`);
+      }
+
+      // 6. Update invitation status to accepted (Authenticated request)
+      try {
+        await supabase.from('invitations').update({ status: 'accepted' }).eq('id', invite.id);
+      } catch {
+        // Ignore update error
+      }
+
+      // 7. Update AuthContext state with active session and fetch profile
+      setSession(currentSession);
+      setUser(authUser);
+      await fetchProfile(authUser.id);
+
+      return { data: authData, error: null };
+    } finally {
+      isSigningUpRef.current = false;
     }
-
-    if (!currentSession) {
-      const { data: signInData } = await supabase.auth.signInWithPassword({ email, password });
-      currentSession = signInData?.session;
-    }
-
-    if (!currentSession || !currentSession.user) {
-      throw new Error('No authenticated session exists after sign up. Please check your email or sign in.');
-    }
-
-    // 4. Create business member link with active authenticated session
-    const { error: memberError } = await supabase
-      .from('business_members')
-      .upsert({
-        business_id: invite.business_id,
-        profile_id: currentSession.user.id,
-        role: invite.role || 'staff',
-        status: 'active'
-      }, { onConflict: 'business_id,profile_id' });
-
-    if (memberError) {
-      console.error('Error creating business_member:', memberError);
-      throw new Error(`Failed to join team: ${memberError.message}`);
-    }
-
-    // 5. Update invitation status to accepted
-    await supabase.from('invitations').update({ status: 'accepted' }).eq('id', invite.id);
-
-    // 6. Refresh auth state
-    setSession(currentSession);
-    setUser(currentSession.user);
-    await fetchProfile(currentSession.user.id);
-
-    return { data: authData, error: null };
   };
 
   const signOut = async () => {
