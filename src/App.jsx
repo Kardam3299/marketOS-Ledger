@@ -10,6 +10,7 @@ import Settings from './pages/Settings';
 import Team from './pages/Team';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import RegisterBusiness from './pages/RegisterBusiness';
 import ForgotPassword from './pages/ForgotPassword';
 import Setup from './pages/Setup';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -65,6 +66,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/register-business" element={<RegisterBusiness />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/setup" element={<Setup />} />
       

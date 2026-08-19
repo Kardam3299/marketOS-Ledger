@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS public.business_members (
     UNIQUE(business_id, profile_id)
 );
 
--- 2D. Invitations Table
+-- 2D. Invitations Table (Member / Staff Invitations)
 CREATE TABLE IF NOT EXISTS public.invitations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     business_id UUID NOT NULL REFERENCES public.businesses(id) ON DELETE RESTRICT,
@@ -63,6 +63,18 @@ CREATE TABLE IF NOT EXISTS public.invitations (
     role TEXT CHECK (role IN ('owner', 'manager', 'staff')) DEFAULT 'staff',
     token UUID NOT NULL DEFAULT uuid_generate_v4(),
     status TEXT DEFAULT 'pending', -- pending, accepted, expired, cancelled
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '7 days'
+);
+
+-- 2E. Business Onboarding Invitations Table (New Business Registration Links)
+CREATE TABLE IF NOT EXISTS public.business_invitations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    email TEXT,
+    token UUID NOT NULL DEFAULT uuid_generate_v4(),
+    status TEXT DEFAULT 'pending', -- pending, used, expired, cancelled
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '7 days'
@@ -155,7 +167,7 @@ DECLARE
     t TEXT;
 BEGIN
     FOR t IN 
-        SELECT unnest(ARRAY['businesses', 'profiles', 'business_members', 'invitations'])
+        SELECT unnest(ARRAY['businesses', 'profiles', 'business_members', 'invitations', 'business_invitations'])
     LOOP
         EXECUTE format('DROP TRIGGER IF EXISTS set_updated_at ON public.%I', t);
         EXECUTE format('CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column()', t);
@@ -187,6 +199,7 @@ CREATE INDEX IF NOT EXISTS idx_transactions_business_id ON public.transactions(b
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON public.transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON public.transactions(created_at);
 CREATE INDEX IF NOT EXISTS idx_invitations_token ON public.invitations(token);
+CREATE INDEX IF NOT EXISTS idx_business_invitations_token ON public.business_invitations(token);
 
 
 -- ==============================================================================
@@ -241,6 +254,7 @@ ALTER TABLE public.businesses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.business_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.invitations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.business_invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
 
 DO $$
@@ -251,7 +265,7 @@ BEGIN
         SELECT policyname, tablename 
         FROM pg_policies 
         WHERE schemaname = 'public' 
-        AND tablename IN ('businesses', 'profiles', 'business_members', 'invitations', 'transactions')
+        AND tablename IN ('businesses', 'profiles', 'business_members', 'invitations', 'business_invitations', 'transactions')
     ) LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', r.policyname, r.tablename);
     END LOOP;
@@ -309,8 +323,19 @@ CREATE POLICY "Members view active invitations" ON public.invitations
 CREATE POLICY "Owners manage invitations" ON public.invitations 
     FOR ALL USING (get_user_role(business_id) = 'owner');
 
--- Note: No public SELECT policy exists anymore. 
--- Public signup flows must use the verify_invitation RPC.
+-- ------------------------------------------------------------------------------
+-- D2. Business Invitations Policies (New Business Onboarding Links)
+-- ------------------------------------------------------------------------------
+CREATE POLICY "Owners manage business invitations" ON public.business_invitations 
+    FOR ALL USING (
+        EXISTS (
+            SELECT 1 FROM public.business_members 
+            WHERE profile_id = auth.uid() AND role = 'owner' AND status = 'active'
+        )
+    );
+
+-- Note: No public SELECT policy exists for invitations or business_invitations. 
+-- Public signup flows must use verify_invitation / verify_business_invitation RPCs.
 
 -- ------------------------------------------------------------------------------
 -- E. Transactions Policies (Soft Delete Aware)
@@ -416,3 +441,77 @@ BEGIN
     VALUES (new_biz_id, user_id, 'owner', 'active');
 END;
 $$;
+
+-- Securely verify a business invitation token without public SELECT access
+CREATE OR REPLACE FUNCTION public.verify_business_invitation(invite_token UUID)
+RETURNS SETOF public.business_invitations
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT * FROM public.business_invitations 
+    WHERE token = invite_token 
+      AND status = 'pending' 
+      AND expires_at > NOW();
+$$;
+
+-- Atomically register a new business using a one-time onboarding token
+CREATE OR REPLACE FUNCTION public.register_business_with_invite(invite_token UUID, biz_name TEXT, o_name TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    inv_record RECORD;
+    new_biz_id UUID;
+    user_id UUID;
+    user_email TEXT;
+BEGIN
+    user_id := auth.uid();
+    IF user_id IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    -- Verify token is valid, pending, and not expired (lock row to prevent race conditions)
+    SELECT * INTO inv_record 
+    FROM public.business_invitations 
+    WHERE token = invite_token 
+      AND status = 'pending' 
+      AND expires_at > NOW()
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Invalid, expired, or already used business invitation link';
+    END IF;
+
+    -- Fetch user's registered email
+    SELECT email INTO user_email FROM public.profiles WHERE id = user_id;
+    IF user_email IS NULL THEN
+        SELECT email INTO user_email FROM auth.users WHERE id = user_id;
+    END IF;
+
+    -- Ensure profile exists
+    INSERT INTO public.profiles (id, full_name, email)
+    VALUES (user_id, o_name, user_email)
+    ON CONFLICT (id) DO UPDATE SET full_name = o_name;
+
+    -- Create the new business record
+    INSERT INTO public.businesses (business_name, owner_name, email)
+    VALUES (biz_name, o_name, user_email)
+    RETURNING id INTO new_biz_id;
+
+    -- Link user as the Owner of the new business
+    INSERT INTO public.business_members (business_id, profile_id, role, status)
+    VALUES (new_biz_id, user_id, 'owner', 'active')
+    ON CONFLICT (business_id, profile_id) 
+    DO UPDATE SET role = 'owner', status = 'active';
+
+    -- Burn the invitation token immediately (marked as used)
+    UPDATE public.business_invitations 
+    SET status = 'used', updated_at = NOW() 
+    WHERE id = inv_record.id;
+
+    RETURN new_biz_id;
+END;
+$$;
+

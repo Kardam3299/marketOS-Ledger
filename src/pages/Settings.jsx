@@ -6,11 +6,14 @@ import Button from '../components/Button';
 import { useSettings } from '../hooks/useData';
 import { useSync } from '../hooks/useSync';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabaseClient';
 import { CURRENCIES } from '../utils/constants';
 import { validateBusinessName, validateOwnerName } from '../utils/validators';
 import { api } from '../lib/repositories';
 
 export default function Settings() {
+  const { profile } = useAuth();
   const { settings, loading, updateSettings } = useSettings();
   const { syncStatus, triggerSync, testConnection, updateSyncSettings, loading: syncLoading } = useSync();
   const { success, error } = useToast();
@@ -19,6 +22,11 @@ export default function Settings() {
   const [isSavingSync, setIsSavingSync] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+
+  // Business Onboarding Invites State
+  const [businessInvites, setBusinessInvites] = useState([]);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [isGeneratingInvite, setIsGeneratingInvite] = useState(false);
 
   const [errors, setErrors] = useState({});
   const [formData, setFormData] = useState({
@@ -196,12 +204,183 @@ export default function Settings() {
     }
   };
 
+  const fetchBusinessInvites = async () => {
+    if (!supabase) return;
+    try {
+      const { data, error: fetchErr } = await supabase
+        .from('business_invitations')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!fetchErr && data) {
+        setBusinessInvites(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch business invites:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (profile?.role === 'owner') {
+      fetchBusinessInvites();
+    }
+  }, [profile]);
+
+  const handleGenerateBusinessInvite = async (e) => {
+    e.preventDefault();
+    if (!supabase) return;
+    setIsGeneratingInvite(true);
+    try {
+      const { error: invErr } = await supabase
+        .from('business_invitations')
+        .insert([{ email: inviteEmail ? inviteEmail.trim() : null, status: 'pending' }]);
+
+      if (invErr) throw invErr;
+      success('Business registration link generated successfully!');
+      setInviteEmail('');
+      fetchBusinessInvites();
+    } catch (err) {
+      error(err.message || 'Failed to generate business invitation link');
+    } finally {
+      setIsGeneratingInvite(false);
+    }
+  };
+
+  const handleCancelBusinessInvite = async (id) => {
+    if (!supabase) return;
+    try {
+      const { error: delErr } = await supabase
+        .from('business_invitations')
+        .delete()
+        .eq('id', id);
+      if (delErr) throw delErr;
+      success('Invitation link cancelled.');
+      fetchBusinessInvites();
+    } catch (err) {
+      error('Failed to cancel invitation');
+    }
+  };
+
+  const copyBusinessInviteLink = (token) => {
+    const baseUrl = import.meta.env.VITE_APP_URL
+      ? import.meta.env.VITE_APP_URL.replace(/\/$/, '')
+      : (window.location.protocol !== 'file:' && window.location.origin !== 'null' ? window.location.origin : '');
+    const invitePath = `/#/register-business?invite=${token}`;
+    const url = baseUrl ? `${baseUrl}${invitePath}` : invitePath;
+
+    navigator.clipboard.writeText(url);
+    success('Business registration link copied to clipboard!');
+  };
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-600 mt-2">Manage your business information and cloud synchronization</p>
       </div>
+
+      {/* Business Onboarding Links (Owner Only) */}
+      {profile?.role === 'owner' && (
+        <Card>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">New Business Registration Links</h3>
+              <p className="text-gray-600 text-sm mt-1">
+                Generate secure, single-use invite links for new business owners to register their isolated ledgers.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleGenerateBusinessInvite} className="flex flex-col sm:flex-row gap-4 items-end mb-6 bg-blue-50/50 p-4 rounded-lg border border-blue-100">
+            <div className="flex-1 w-full">
+              <Input
+                label="Recipient Email Address (Optional)"
+                type="email"
+                placeholder="new-owner@business.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+              />
+            </div>
+            <Button
+              type="submit"
+              isLoading={isGeneratingInvite}
+              className="w-full sm:w-auto"
+            >
+              Generate Business Invite Link
+            </Button>
+          </form>
+
+          {businessInvites.length > 0 ? (
+            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Recipient Email</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
+                    <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 bg-white">
+                  {businessInvites.map((inv) => {
+                    const isExpired = new Date(inv.expires_at) < new Date();
+                    const displayStatus = inv.status === 'used' ? 'used' : (isExpired ? 'expired' : inv.status);
+
+                    return (
+                      <tr key={inv.id}>
+                        <td className="px-4 py-3 text-gray-900 font-medium">
+                          {inv.email || <span className="text-gray-400 italic">Any email</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${
+                              displayStatus === 'pending'
+                                ? 'bg-green-100 text-green-800'
+                                : displayStatus === 'used'
+                                ? 'bg-gray-100 text-gray-600'
+                                : 'bg-red-100 text-red-800'
+                            }`}
+                          >
+                            {displayStatus}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-gray-500">
+                          {new Date(inv.created_at).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-3 text-right space-x-2">
+                          {displayStatus === 'pending' && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => copyBusinessInviteLink(inv.token)}
+                              className="text-xs py-1 px-2.5"
+                            >
+                              Copy Link
+                            </Button>
+                          )}
+                          {displayStatus === 'pending' && (
+                            <Button
+                              type="button"
+                              variant="danger"
+                              onClick={() => handleCancelBusinessInvite(inv.id)}
+                              className="text-xs py-1 px-2.5"
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500 text-center py-4 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+              No business onboarding links generated yet.
+            </p>
+          )}
+        </Card>
+      )}
 
       {/* Business Settings */}
       <Card>

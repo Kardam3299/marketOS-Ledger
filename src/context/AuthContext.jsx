@@ -299,6 +299,66 @@ export default function AuthProvider({ children }) {
     }
   };
 
+  const registerBusinessWithInvite = async (email, password, name, businessName, token) => {
+    if (!supabase) throw new Error('Supabase client not initialized');
+    isSigningUpRef.current = true;
+
+    try {
+      // 1. Verify invitation token via RPC
+      const { data: invites, error: inviteError } = await supabase
+        .rpc('verify_business_invitation', { invite_token: token });
+
+      if (inviteError || !invites || invites.length === 0) {
+        throw new Error('Invalid, expired, or already used business invitation link');
+      }
+
+      // 2. Create user account via signUp
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { full_name: name }
+        }
+      });
+
+      if (authError && !authError.message.toLowerCase().includes('already registered') && authError.status !== 400) {
+        throw authError;
+      }
+
+      // 3. Authenticate to establish session
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError || !signInData?.session) {
+        throw new Error(signInError?.message || 'Failed to authenticate newly created account. Please sign in with your email and password.');
+      }
+
+      const currentSession = signInData.session;
+      const authUser = signInData.user;
+
+      // 4. Call register_business_with_invite RPC (creates business, assigns owner, burns token)
+      const { data: newBizId, error: rpcError } = await supabase
+        .rpc('register_business_with_invite', {
+          invite_token: token,
+          biz_name: businessName,
+          o_name: name
+        });
+
+      if (rpcError) {
+        console.error('Error in register_business_with_invite:', rpcError);
+        throw new Error(rpcError.message || 'Failed to register business');
+      }
+
+      // 5. Update AuthContext state
+      setIsInitialized(true);
+      setSession(currentSession);
+      setUser(authUser);
+      await fetchProfile(authUser.id);
+
+      return { data: { ...authData, business_id: newBizId }, error: null };
+    } finally {
+      isSigningUpRef.current = false;
+    }
+  };
+
   const signOut = async () => {
     if (supabase) {
       try {
@@ -331,6 +391,7 @@ export default function AuthProvider({ children }) {
       signIn,
       signUp,
       signUpWithInvite,
+      registerBusinessWithInvite,
       signOut,
       resetPassword,
       refreshAuthState
