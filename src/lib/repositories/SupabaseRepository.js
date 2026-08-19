@@ -14,6 +14,7 @@ export class SupabaseRepository {
       const { data: { session } } = await this.supabase.auth.getSession();
       if (!session?.user) return null;
       
+      // 1. Try active business membership
       const { data: member } = await this.supabase
         .from('business_members')
         .select('business_id, profile_id')
@@ -21,9 +22,46 @@ export class SupabaseRepository {
         .eq('status', 'active')
         .maybeSingle();
 
+      let businessId = member?.business_id;
+
+      // 2. Fallback: Find business where email matches or oldest business
+      if (!businessId) {
+        const { data: bizByEmail } = await this.supabase
+          .from('businesses')
+          .select('id')
+          .eq('email', session.user.email)
+          .maybeSingle();
+
+        businessId = bizByEmail?.id;
+
+        if (!businessId) {
+          const { data: firstBiz } = await this.supabase
+            .from('businesses')
+            .select('id')
+            .order('created_at', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+          businessId = firstBiz?.id;
+        }
+
+        // Auto-link business_members if missing
+        if (businessId) {
+          try {
+            await this.supabase.from('business_members').upsert({
+              business_id: businessId,
+              profile_id: session.user.id,
+              role: 'owner',
+              status: 'active'
+            }, { onConflict: 'business_id,profile_id' });
+          } catch {
+            // Ignore if RLS restricts direct membership upsert
+          }
+        }
+      }
+
       return {
         userId: session.user.id,
-        businessId: member?.business_id || null
+        businessId: businessId || null
       };
     } catch {
       return null;

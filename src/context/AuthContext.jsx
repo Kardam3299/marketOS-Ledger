@@ -45,29 +45,12 @@ export default function AuthProvider({ children }) {
       }
 
       if (profileData) {
-        let isSuperAdmin = profileData.is_super_admin === true;
-        if (!isSuperAdmin && membershipData?.role === 'owner') {
-          try {
-            const { data: firstBiz } = await supabase
-              .from('businesses')
-              .select('id')
-              .order('created_at', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            if (firstBiz && firstBiz.id === membershipData.business_id) {
-              isSuperAdmin = true;
-            }
-          } catch {
-            // fallback
-          }
-        }
-
         const fullProfile = {
           ...profileData,
           role: membershipData?.role,
           business_id: membershipData?.business_id,
           business: membershipData?.businesses,
-          is_super_admin: isSuperAdmin
+          is_super_admin: profileData.is_super_admin === true
         };
 
         setProfile(fullProfile);

@@ -336,45 +336,86 @@ AS $$
     SELECT EXISTS (
         SELECT 1 FROM public.profiles 
         WHERE id = auth.uid() AND is_super_admin = true
-    ) OR EXISTS (
-        SELECT 1 FROM public.business_members bm
-        JOIN (
-            SELECT id FROM public.businesses ORDER BY created_at ASC LIMIT 1
-        ) primary_biz ON bm.business_id = primary_biz.id
-        WHERE bm.profile_id = auth.uid() AND bm.role = 'owner' AND bm.status = 'active'
     );
 $$;
 
 DROP POLICY IF EXISTS "Owners manage business invitations" ON public.business_invitations;
 DROP POLICY IF EXISTS "Super admins manage business invitations" ON public.business_invitations;
 CREATE POLICY "Super admins manage business invitations" ON public.business_invitations 
-    FOR ALL USING (
-        public.is_super_admin()
-    );
+    FOR ALL 
+    TO authenticated
+    USING (public.is_super_admin())
+    WITH CHECK (public.is_super_admin());
 
 -- Note: No public SELECT policy exists for invitations or business_invitations. 
 -- Public signup flows must use verify_invitation / verify_business_invitation RPCs.
 
 -- ------------------------------------------------------------------------------
--- E. Transactions Policies (Soft Delete Aware)
+-- E. Transactions Policies (Soft Delete & Super Admin Aware)
 -- ------------------------------------------------------------------------------
+-- Auto-resolve business_id and created_by if missing
+CREATE OR REPLACE FUNCTION public.handle_transaction_business_id()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.business_id IS NULL THEN
+        SELECT business_id INTO NEW.business_id 
+        FROM public.business_members 
+        WHERE profile_id = auth.uid() AND status = 'active'
+        LIMIT 1;
+    END IF;
+
+    IF NEW.business_id IS NULL THEN
+        SELECT id INTO NEW.business_id 
+        FROM public.businesses 
+        ORDER BY created_at ASC 
+        LIMIT 1;
+    END IF;
+
+    IF NEW.created_by IS NULL THEN
+        NEW.created_by := auth.uid();
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+DROP TRIGGER IF EXISTS trg_transaction_business_id ON public.transactions;
+CREATE TRIGGER trg_transaction_business_id
+    BEFORE INSERT ON public.transactions
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_transaction_business_id();
+
 CREATE POLICY "Members view transactions" ON public.transactions 
-    FOR SELECT USING (is_deleted = false AND is_business_member(business_id));
-
-CREATE POLICY "Staff insert transactions" ON public.transactions 
-    FOR INSERT WITH CHECK (is_business_member(business_id));
-
-CREATE POLICY "Role based transaction updates" ON public.transactions 
-    FOR UPDATE USING (
-        is_deleted = false AND
-        is_business_member(business_id) AND (
-            created_by = auth.uid() OR 
-            get_user_role(business_id) IN ('owner', 'manager')
+    FOR SELECT USING (
+        (is_deleted IS NULL OR is_deleted = false) AND (
+            is_business_member(business_id) OR
+            public.is_super_admin()
         )
     );
 
+CREATE POLICY "Staff insert transactions" ON public.transactions 
+    FOR INSERT WITH CHECK (
+        is_business_member(business_id) OR
+        public.is_super_admin()
+    );
+
+CREATE POLICY "Role based transaction updates" ON public.transactions 
+    FOR UPDATE 
+    TO authenticated
+    USING (
+        is_business_member(business_id) OR
+        public.is_super_admin()
+    )
+    WITH CHECK (
+        is_business_member(business_id) OR
+        public.is_super_admin()
+    );
+
 CREATE POLICY "Owners hard delete transactions" ON public.transactions 
-    FOR DELETE USING (get_user_role(business_id) = 'owner');
+    FOR DELETE USING (
+        get_user_role(business_id) = 'owner' OR
+        public.is_super_admin()
+    );
 
 
 -- ==============================================================================
@@ -462,6 +503,27 @@ BEGIN
 
     INSERT INTO public.business_members (business_id, profile_id, role, status)
     VALUES (new_biz_id, user_id, 'owner', 'active');
+END;
+$$;
+
+-- Securely create a new business invitation token (Super Admin only)
+CREATE OR REPLACE FUNCTION public.create_business_invitation(p_email TEXT DEFAULT NULL)
+RETURNS public.business_invitations
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    new_inv public.business_invitations;
+BEGIN
+    IF NOT public.is_super_admin() THEN
+        RAISE EXCEPTION 'Access denied. Super Admin privileges required.';
+    END IF;
+
+    INSERT INTO public.business_invitations (email, status, created_by)
+    VALUES (p_email, 'pending', auth.uid())
+    RETURNING * INTO new_inv;
+
+    RETURN new_inv;
 END;
 $$;
 

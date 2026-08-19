@@ -230,11 +230,21 @@ export default function Settings() {
     if (!supabase || !profile?.is_super_admin) return;
     setIsGeneratingInvite(true);
     try {
-      const { error: invErr } = await supabase
-        .from('business_invitations')
-        .insert([{ email: inviteEmail ? inviteEmail.trim() : null, status: 'pending' }]);
+      const emailVal = inviteEmail ? inviteEmail.trim() : null;
+      // Try dedicated RPC first
+      const { error: rpcErr } = await supabase.rpc('create_business_invitation', {
+        p_email: emailVal
+      });
 
-      if (invErr) throw invErr;
+      if (rpcErr) {
+        // Fallback to direct table insert
+        const { error: invErr } = await supabase
+          .from('business_invitations')
+          .insert([{ email: emailVal, status: 'pending' }]);
+
+        if (invErr) throw invErr;
+      }
+
       success('Business registration link generated successfully!');
       setInviteEmail('');
       fetchBusinessInvites();
