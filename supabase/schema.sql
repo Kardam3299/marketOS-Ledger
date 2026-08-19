@@ -327,14 +327,29 @@ CREATE POLICY "Owners manage invitations" ON public.invitations
 -- ------------------------------------------------------------------------------
 -- D2. Business Invitations Policies (New Business Onboarding Links - Super Admin Only)
 -- ------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.is_super_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM public.profiles 
+        WHERE id = auth.uid() AND is_super_admin = true
+    ) OR EXISTS (
+        SELECT 1 FROM public.business_members bm
+        JOIN (
+            SELECT id FROM public.businesses ORDER BY created_at ASC LIMIT 1
+        ) primary_biz ON bm.business_id = primary_biz.id
+        WHERE bm.profile_id = auth.uid() AND bm.role = 'owner' AND bm.status = 'active'
+    );
+$$;
+
 DROP POLICY IF EXISTS "Owners manage business invitations" ON public.business_invitations;
 DROP POLICY IF EXISTS "Super admins manage business invitations" ON public.business_invitations;
 CREATE POLICY "Super admins manage business invitations" ON public.business_invitations 
     FOR ALL USING (
-        EXISTS (
-            SELECT 1 FROM public.profiles 
-            WHERE id = auth.uid() AND is_super_admin = true
-        )
+        public.is_super_admin()
     );
 
 -- Note: No public SELECT policy exists for invitations or business_invitations. 
