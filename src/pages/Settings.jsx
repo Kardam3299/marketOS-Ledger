@@ -220,14 +220,14 @@ export default function Settings() {
   };
 
   useEffect(() => {
-    if (profile?.role === 'owner') {
+    if (profile?.is_super_admin) {
       fetchBusinessInvites();
     }
   }, [profile]);
 
   const handleGenerateBusinessInvite = async (e) => {
     e.preventDefault();
-    if (!supabase) return;
+    if (!supabase || !profile?.is_super_admin) return;
     setIsGeneratingInvite(true);
     try {
       const { error: invErr } = await supabase
@@ -246,7 +246,7 @@ export default function Settings() {
   };
 
   const handleCancelBusinessInvite = async (id) => {
-    if (!supabase) return;
+    if (!supabase || !profile?.is_super_admin) return;
     try {
       const { error: delErr } = await supabase
         .from('business_invitations')
@@ -278,12 +278,17 @@ export default function Settings() {
         <p className="text-gray-600 mt-2">Manage your business information and cloud synchronization</p>
       </div>
 
-      {/* Business Onboarding Links (Owner Only) */}
-      {profile?.role === 'owner' && (
+      {/* Business Onboarding Links (Super Admin Only) */}
+      {profile?.is_super_admin && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
             <div>
-              <h3 className="text-xl font-bold text-gray-900">New Business Registration Links</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="text-xl font-bold text-gray-900">New Business Registration Links</h3>
+                <span className="px-2 py-0.5 text-xs font-semibold bg-purple-100 text-purple-700 rounded-full">
+                  Super Admin
+                </span>
+              </div>
               <p className="text-gray-600 text-sm mt-1">
                 Generate secure, single-use invite links for new business owners to register their isolated ledgers.
               </p>

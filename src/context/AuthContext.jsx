@@ -49,7 +49,8 @@ export default function AuthProvider({ children }) {
           ...profileData,
           role: membershipData?.role,
           business_id: membershipData?.business_id,
-          business: membershipData?.businesses
+          business: membershipData?.businesses,
+          is_super_admin: profileData.is_super_admin === true
         };
 
         setProfile(fullProfile);
@@ -242,14 +243,24 @@ export default function AuthProvider({ children }) {
         }
       });
 
-      if (authError && !authError.message.toLowerCase().includes('already registered') && authError.status !== 400) {
-        throw authError;
+      if (authError) {
+        const errorMsg = (authError.message || '').toLowerCase();
+        const isExistingUser = errorMsg.includes('already registered') || errorMsg.includes('already exists') || authError.code === 'user_already_exists';
+        if (!isExistingUser) {
+          throw authError;
+        }
       }
 
       // 3. Authenticate IMMEDIATELY so Supabase client attaches the Bearer token for RLS REST calls
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError || !signInData?.session) {
-        throw new Error(signInError?.message || 'Failed to authenticate newly created account. Please sign in with your email and password.');
+        if (signInError?.message?.toLowerCase().includes('invalid login credentials')) {
+          throw new Error('An account with this email already exists. Please enter your existing account password or use a different email address.');
+        }
+        if (signInError?.message?.toLowerCase().includes('email not confirmed')) {
+          throw new Error('Email is not confirmed yet. Please verify your email or disable "Confirm email" in Supabase Auth settings.');
+        }
+        throw new Error(signInError?.message || 'Failed to authenticate newly created account.');
       }
 
       const currentSession = signInData.session;
@@ -321,14 +332,24 @@ export default function AuthProvider({ children }) {
         }
       });
 
-      if (authError && !authError.message.toLowerCase().includes('already registered') && authError.status !== 400) {
-        throw authError;
+      if (authError) {
+        const errorMsg = (authError.message || '').toLowerCase();
+        const isExistingUser = errorMsg.includes('already registered') || errorMsg.includes('already exists') || authError.code === 'user_already_exists';
+        if (!isExistingUser) {
+          throw authError;
+        }
       }
 
       // 3. Authenticate to establish session
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError || !signInData?.session) {
-        throw new Error(signInError?.message || 'Failed to authenticate newly created account. Please sign in with your email and password.');
+        if (signInError?.message?.toLowerCase().includes('invalid login credentials')) {
+          throw new Error('An account with this email already exists. Please enter your existing account password or use a different email address.');
+        }
+        if (signInError?.message?.toLowerCase().includes('email not confirmed')) {
+          throw new Error('Email is not confirmed yet. Please verify your email or disable "Confirm email" in Supabase Auth settings.');
+        }
+        throw new Error(signInError?.message || 'Failed to authenticate newly created account.');
       }
 
       const currentSession = signInData.session;

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     full_name TEXT,
     email TEXT NOT NULL,
     avatar_url TEXT,
+    is_super_admin BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -324,13 +325,15 @@ CREATE POLICY "Owners manage invitations" ON public.invitations
     FOR ALL USING (get_user_role(business_id) = 'owner');
 
 -- ------------------------------------------------------------------------------
--- D2. Business Invitations Policies (New Business Onboarding Links)
+-- D2. Business Invitations Policies (New Business Onboarding Links - Super Admin Only)
 -- ------------------------------------------------------------------------------
-CREATE POLICY "Owners manage business invitations" ON public.business_invitations 
+DROP POLICY IF EXISTS "Owners manage business invitations" ON public.business_invitations;
+DROP POLICY IF EXISTS "Super admins manage business invitations" ON public.business_invitations;
+CREATE POLICY "Super admins manage business invitations" ON public.business_invitations 
     FOR ALL USING (
         EXISTS (
-            SELECT 1 FROM public.business_members 
-            WHERE profile_id = auth.uid() AND role = 'owner' AND status = 'active'
+            SELECT 1 FROM public.profiles 
+            WHERE id = auth.uid() AND is_super_admin = true
         )
     );
 
@@ -432,6 +435,11 @@ BEGIN
     END IF;
 
     SELECT email INTO user_email FROM public.profiles WHERE id = user_id;
+
+    -- Mark the first initializing user as Super Admin
+    UPDATE public.profiles 
+    SET is_super_admin = true 
+    WHERE id = user_id;
 
     INSERT INTO public.businesses (business_name, owner_name, email)
     VALUES (biz_name, o_name, user_email)
