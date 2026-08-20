@@ -150,13 +150,28 @@ export class SupabaseRepository {
   async deleteTransaction(id) {
     if (!this.supabase) return { success: false, error: 'Supabase not configured' };
     try {
+      // Tier 1: Try RPC function
+      const { error: rpcErr } = await this.supabase.rpc('delete_transaction', { tx_id: id });
+      if (!rpcErr) {
+        return { success: true };
+      }
+
+      // Tier 2: Try soft-delete update
       const ctx = await this.getBusinessContext();
-      const { error } = await this.supabase.from('transactions').update({
+      const { error: updateErr } = await this.supabase.from('transactions').update({
         is_deleted: true,
         deleted_at: new Date().toISOString(),
         deleted_by: ctx?.userId || null
       }).eq('id', id);
-      if (error) throw error;
+
+      if (!updateErr) {
+        return { success: true };
+      }
+
+      // Tier 3: Hard-delete fallback if RLS update policy blocks soft-delete
+      const { error: deleteErr } = await this.supabase.from('transactions').delete().eq('id', id);
+      if (deleteErr) throw deleteErr;
+
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };

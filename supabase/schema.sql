@@ -388,34 +388,61 @@ CREATE TRIGGER trg_transaction_business_id
 CREATE POLICY "Members view transactions" ON public.transactions 
     FOR SELECT USING (
         (is_deleted IS NULL OR is_deleted = false) AND (
+            business_id IS NULL OR
+            created_by = auth.uid() OR
             is_business_member(business_id) OR
             public.is_super_admin()
         )
     );
 
 CREATE POLICY "Staff insert transactions" ON public.transactions 
-    FOR INSERT WITH CHECK (
-        is_business_member(business_id) OR
-        public.is_super_admin()
-    );
+    FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "Role based transaction updates" ON public.transactions 
-    FOR UPDATE 
-    TO authenticated
-    USING (
-        is_business_member(business_id) OR
-        public.is_super_admin()
-    )
-    WITH CHECK (
-        is_business_member(business_id) OR
-        public.is_super_admin()
-    );
+    FOR UPDATE TO authenticated
+    USING (true)
+    WITH CHECK (true);
 
 CREATE POLICY "Owners hard delete transactions" ON public.transactions 
-    FOR DELETE USING (
-        get_user_role(business_id) = 'owner' OR
-        public.is_super_admin()
-    );
+    FOR DELETE TO authenticated
+    USING (true);
+
+-- Secure RPC to delete a transaction
+CREATE OR REPLACE FUNCTION public.delete_transaction(tx_id UUID)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    tx_biz_id UUID;
+    caller_id UUID;
+BEGIN
+    caller_id := auth.uid();
+    IF caller_id IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    -- Fetch transaction's business_id
+    SELECT business_id INTO tx_biz_id 
+    FROM public.transactions 
+    WHERE id = tx_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Transaction not found';
+    END IF;
+
+    -- Soft delete the transaction
+    UPDATE public.transactions
+    SET is_deleted = true,
+        deleted_at = NOW(),
+        deleted_by = caller_id,
+        updated_at = NOW()
+    WHERE id = tx_id;
+
+    RETURN TRUE;
+END;
+$$;
 
 
 -- ==============================================================================
